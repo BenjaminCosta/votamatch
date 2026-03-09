@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email == "admin@votamatch.pe";
+    }
+
+    match /questions/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /parties/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /partyAnswers/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /siteTexts/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /responses/{doc} {
+      allow create: if true;   // usuarios pueden guardar respuestas
+      allow read: if isAdmin(); // solo admin ve analytics
+      allow update, delete: if false;
+    }
+  }
+}
