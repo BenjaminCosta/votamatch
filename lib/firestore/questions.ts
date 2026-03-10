@@ -4,6 +4,7 @@ import {
   addDoc,
   deleteDoc,
   doc,
+  updateDoc,
   query,
   orderBy,
   serverTimestamp,
@@ -41,6 +42,16 @@ export async function addQuestion(q: Omit<Question, "docId">): Promise<string> {
 
 export async function deleteQuestion(docId: string): Promise<void> {
   await deleteDoc(doc(db, "questions", docId))
+}
+
+export async function updateQuestion(
+  docId: string,
+  data: Partial<Omit<Question, "docId">>,
+): Promise<void> {
+  await updateDoc(doc(db, "questions", docId), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  })
 }
 
 export async function importQuestions(rows: Omit<Question, "docId">[]): Promise<void> {

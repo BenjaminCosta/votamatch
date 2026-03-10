@@ -16,6 +16,8 @@ export interface Party {
   name: string
   slug: string
   color: string | null
+  iconUrl: string | null
+  iconFileName: string | null
   active: boolean
 }
 
@@ -55,5 +57,8 @@ export interface UserAnswer {
 export interface MatchResult {
   partyId: string
   partyName: string
+  /** Slug used to resolve the party logo from /public/parties/ */
+  partySlug: string
+  partyIconFileName: string | null
   percentage: number
 }

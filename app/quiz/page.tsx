@@ -14,6 +14,7 @@ import { getQuestions } from "@/lib/firestore/questions"
 import { getPartiesForQuiz, type PartyForQuiz } from "@/lib/firestore/partyAnswers"
 import { saveResponse } from "@/lib/firestore/responses"
 import { calculateMatch } from "@/lib/quiz"
+import { saveSessionResults } from "@/lib/sessionResults"
 import type { Question } from "@/lib/types"
 
 interface Answer {
@@ -44,6 +45,8 @@ export default function QuizPage() {
   // Touch gesture refs
   const touchStartX = useRef<number>(0)
   const touchEndX = useRef<number>(0)
+  const touchStartY = useRef<number>(0)
+  const touchEndY = useRef<number>(0)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Derived state - defined before any hooks that use it
@@ -61,30 +64,44 @@ export default function QuizPage() {
   // Finish quiz handler
   const handleFinishQuiz = useCallback(async () => {
     setIsLoading(true)
-    try {
-      const userAnswersList = Object.entries(answers).flatMap(([idxStr, ans]) => {
-        const externalId = firestoreQuestions[parseInt(idxStr)]?.externalId
-        // Skip answers whose question has no externalId to keep IDs consistent
-        if (!externalId) return []
-        return [{ questionExternalId: externalId, answer: ans.answer, important: ans.important }]
-      })
-      const results = firestoreParties
-        .map((party) => ({
-          partyId: party.docId,
-          partyName: party.name,
-          percentage: calculateMatch(userAnswersList, party.answers),
-        }))
-        .sort((a, b) => b.percentage - a.percentage)
-      if (firestoreParties.length > 0) {
+
+    // 1. Calculate results (synchronous)
+    const userAnswersList = Object.entries(answers).flatMap(([idxStr, ans]) => {
+      const externalId = firestoreQuestions[parseInt(idxStr)]?.externalId
+      // Skip answers whose question has no externalId to keep IDs consistent
+      if (!externalId) return []
+      return [{ questionExternalId: externalId, answer: ans.answer, important: ans.important }]
+    })
+    const results = firestoreParties
+      .map((party) => ({
+        partyId: party.docId,
+        partyName: party.name,
+        partySlug: party.slug,
+        partyIconFileName: party.iconFileName ?? null,
+        percentage: calculateMatch(userAnswersList, party.answers),
+      }))
+      .sort((a, b) => b.percentage - a.percentage)
+
+    // 2. Persist results to sessionStorage BEFORE any async work so navigation
+    //    always finds data regardless of whether Firestore succeeds or fails.
+    console.log("[quiz] saving results to sessionStorage", results)
+    saveSessionResults(results)
+    console.log("[quiz] sessionStorage saved")
+
+    // 3. Save participation to Firestore (best-effort — never blocks navigation)
+    if (firestoreParties.length > 0) {
+      try {
         await saveResponse({
           answers: answers as Record<number, { answer: "yes" | "no" | "neutral"; important: boolean }>,
           results,
         })
+      } catch (err) {
+        console.error("[quiz] saveResponse failed:", err)
+        setSaveError(true)
       }
-    } catch (err) {
-      console.error("[quiz] saveResponse failed:", err)
-      setSaveError(true)
     }
+
+    // 4. Navigate — sessionStorage is already written
     setTimeout(() => router.push("/result"), 2500)
   }, [router, answers, firestoreQuestions, firestoreParties])
 
@@ -120,22 +137,29 @@ export default function QuizPage() {
   // Touch handlers for swipe
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX
+    touchEndX.current = e.touches[0].clientX   // reset — ensures tap = 0 distance
+    touchStartY.current = e.touches[0].clientY
+    touchEndY.current = e.touches[0].clientY
   }
 
   const handleTouchMove = (e: React.TouchEvent) => {
     touchEndX.current = e.touches[0].clientX
+    touchEndY.current = e.touches[0].clientY
   }
 
   const handleTouchEnd = () => {
-    const swipeDistance = touchStartX.current - touchEndX.current
-    const minSwipeDistance = 50
+    const swipeX = touchStartX.current - touchEndX.current
+    const swipeY = Math.abs(touchStartY.current - touchEndY.current)
+    const minSwipeDistance = 60
 
-    if (Math.abs(swipeDistance) > minSwipeDistance) {
-      if (swipeDistance > 0) {
-        // Swipe left - next question
+    // Only treat as horizontal swipe when: distance is large enough AND
+    // horizontal movement clearly dominates vertical (not a scroll)
+    if (Math.abs(swipeX) > minSwipeDistance && Math.abs(swipeX) > swipeY * 1.5) {
+      if (swipeX > 0) {
+        // Swipe left → next question
         goToNext()
       } else {
-        // Swipe right - previous question
+        // Swipe right → previous question
         goToPrevious()
       }
     }

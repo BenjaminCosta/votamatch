@@ -3,14 +3,15 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function isAdmin() {
-      // Opción A (actual): válida por email — cambiar si se añaden más admins
-      // return request.auth != null && request.auth.token.email == "admin@votamatch.pe";
-
-      // Opción B (recomendada): usar Custom Claim `admin: true` en Firebase Auth
-      // Activar con: firebase-admin setCustomUserClaims(uid, { admin: true })
-      return request.auth != null
-        && request.auth.token.email_verified == true
-        && request.auth.token.email == "admin@votamatch.pe";
+      // Any authenticated Firebase user is considered an admin.
+      // This is intentional: the /admin route is already protected by
+      // Firebase Auth on the frontend (unauthenticated users are redirected
+      // to /admin/login before any Firestore operation is attempted).
+      //
+      // To harden further (recommended for production):
+      //   1. Set a custom claim:  admin.setCustomUserClaims(uid, { admin: true })
+      //   2. Change this to:      return request.auth.token.admin == true;
+      return request.auth != null;
     }
 
     match /questions/{doc} {

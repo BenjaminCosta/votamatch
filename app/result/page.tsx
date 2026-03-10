@@ -1,35 +1,59 @@
 "use client"
 
+import { useState, useEffect, useRef } from "react"
 import Image from "next/image"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { ResultList } from "@/components/ResultList"
-import { RotateCcw, Share2, Trophy, TrendingUp } from "lucide-react"
+import { PartyIcon } from "@/components/PartyIcon"
+import { getPartyColor, colorToAlpha } from "@/lib/party-colors"
+import { RotateCcw, Trophy, TrendingUp } from "lucide-react"
 import { motion } from "framer-motion"
-
-const mockResults = [
-  { name: "Partido Morado", percentage: 78 },
-  { name: "Acción Popular", percentage: 65 },
-  { name: "Alianza para el Progreso", percentage: 58 },
-  { name: "Fuerza Popular", percentage: 45 },
-  { name: "Perú Libre", percentage: 42 },
-  { name: "Renovación Popular", percentage: 38 },
-  { name: "Juntos por el Perú", percentage: 35 },
-  { name: "Podemos Perú", percentage: 28 },
-]
+import { readSessionResults, clearSessionResults } from "@/lib/sessionResults"
+import type { MatchResult } from "@/lib/types"
 
 export default function ResultPage() {
-  const handleShare = async () => {
-    if (navigator.share) {
-      await navigator.share({
-        title: "Votamatch Perú 2026",
-        text: "¡Descubre con qué partido coincides!",
-        url: window.location.origin,
-      })
+  const router = useRouter()
+  const [results, setResults] = useState<MatchResult[] | null>(null)
+  const [ready, setReady] = useState(false)
+  // Guard against React 18 Strict Mode running the effect twice:
+  // first run reads + clears session; without this flag the second run
+  // would find an empty session and redirect straight back to /quiz.
+  const hasRead = useRef(false)
+
+  useEffect(() => {
+    if (hasRead.current) return
+    hasRead.current = true
+
+    console.log("[result] reading sessionStorage")
+    const data = readSessionResults()
+    console.log("[result] data found:", data)
+
+    if (!data) {
+      console.log("[result] no session data — redirecting to /quiz")
+      router.replace("/quiz")
+      return
     }
+    setResults(data)
+    setReady(true)
+    // Clear after reading so a hard refresh doesn't re-show stale results
+    clearSessionResults()
+  }, [router])
+
+  // While reading sessionStorage / redirecting
+  if (!ready || !results) {
+    return (
+      <div className="min-h-screen bg-[#F5F7FA] flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-[#5B8FCB] border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
   }
 
+  const topMatch = results[0]
+  const rest = results.slice(1)
+
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-sky-50 py-8 px-4">
+    <main className="min-h-screen bg-linear-to-br from-slate-50 via-white to-sky-50 py-8 px-4">
       {/* Background decorations */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-[#5B8FCB]/5 rounded-full blur-3xl" />
@@ -37,7 +61,8 @@ export default function ResultPage() {
       </div>
 
       <div className="max-w-2xl mx-auto relative">
-        <motion.div 
+        {/* Logo */}
+        <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
@@ -54,14 +79,15 @@ export default function ResultPage() {
           </Link>
         </motion.div>
 
-        <motion.div 
+        {/* Header card */}
+        <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5, delay: 0.1 }}
           className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg shadow-slate-200/50 border border-slate-100 p-6 md:p-8 mb-6"
         >
           <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#5B8FCB] to-[#4A7DB8] flex items-center justify-center">
+            <div className="w-12 h-12 rounded-full bg-linear-to-br from-[#5B8FCB] to-[#4A7DB8] flex items-center justify-center">
               <Trophy className="w-6 h-6 text-white" />
             </div>
           </div>
@@ -78,28 +104,50 @@ export default function ResultPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.2 }}
-          className="bg-gradient-to-r from-[#5B8FCB] to-[#4A7DB8] rounded-2xl p-6 mb-6 text-white"
+          className="rounded-2xl p-6 mb-6 text-white"
+          style={{ background: `linear-gradient(135deg, ${getPartyColor(topMatch.partySlug ?? "")}, ${getPartyColor(topMatch.partySlug ?? "")}cc)` }}
         >
           <div className="flex items-center gap-2 mb-3">
             <TrendingUp className="w-5 h-5" />
             <span className="text-sm font-medium opacity-90">Mayor coincidencia</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-xl font-bold">{mockResults[0].name}</span>
-            <span className="text-3xl font-bold">{mockResults[0].percentage}%</span>
+            <div className="flex items-center gap-3 min-w-0">
+              <PartyIcon
+                slug={topMatch.partySlug ?? ""}
+                iconFileName={topMatch.partyIconFileName ?? undefined}
+                name={topMatch.partyName}
+                size={52}
+                className="shrink-0"
+              />
+              <span className="text-xl font-bold truncate">{topMatch.partyName}</span>
+            </div>
+            <span className="text-3xl font-bold shrink-0 ml-3">{topMatch.percentage}%</span>
           </div>
         </motion.div>
 
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-          className="mb-8"
-        >
-          <ResultList results={mockResults.slice(1)} />
-        </motion.div>
+        {/* Full ranking */}
+        {rest.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+            className="mb-8"
+          >
+            <ResultList
+              results={rest.map((r) => ({
+                partyId: r.partyId,
+                name: r.partyName,
+                percentage: r.percentage,
+                partySlug: r.partySlug ?? "",
+                partyIconFileName: r.partyIconFileName ?? null,
+              }))}
+            />
+          </motion.div>
+        )}
 
-        <motion.div 
+        {/* Actions */}
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.4 }}
@@ -112,16 +160,9 @@ export default function ResultPage() {
             <RotateCcw className="w-5 h-5" />
             Repetir cuestionario
           </Link>
-          <button
-            className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#5B8FCB] to-[#4A7DB8] text-white font-medium hover:shadow-lg hover:shadow-[#5B8FCB]/25 transition-all duration-200"
-            onClick={handleShare}
-          >
-            <Share2 className="w-5 h-5" />
-            Compartir resultados
-          </button>
         </motion.div>
 
-        <motion.p 
+        <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.5 }}

@@ -4,17 +4,19 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import Link from "next/link"
-import { FileText, Building2, MessageSquare, Type, Menu, X, Plus, Search, Home, ChevronRight, Trash2, Save, LogOut, User, UploadCloud } from "lucide-react"
+import { FileText, Building2, MessageSquare, Type, Menu, X, Plus, Search, Home, ChevronRight, Trash2, Save, LogOut, User, UploadCloud, Pencil } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { EmptyState } from "@/components/EmptyState"
 import { ImportExportSection } from "@/components/ImportExportSection"
+import { PartyIcon } from "@/components/PartyIcon"
+import { getPartyColor, colorToAlpha } from "@/lib/party-colors"
 import { useToast } from "@/components/Toast"
 import { useAuth } from "@/providers/AuthProvider"
 import { signOut } from "firebase/auth"
 import { auth } from "@/lib/firebase"
-import { getQuestions, addQuestion, deleteQuestion } from "@/lib/firestore/questions"
-import { getParties, addParty, deleteParty, nameToSlug } from "@/lib/firestore/parties"
-import { getPartyAnswers, addPartyAnswer, deletePartyAnswer } from "@/lib/firestore/partyAnswers"
+import { getQuestions, addQuestion, updateQuestion, deleteQuestion } from "@/lib/firestore/questions"
+import { getParties, addParty, updateParty, deleteParty, nameToSlug } from "@/lib/firestore/parties"
+import { getPartyAnswers, addPartyAnswer, updatePartyAnswer, deletePartyAnswer } from "@/lib/firestore/partyAnswers"
 import { getSiteTexts, saveSiteTexts } from "@/lib/firestore/siteTexts"
 import type { Question, Party, PartyAnswer, SiteTexts } from "@/lib/types"
 import { DEFAULT_SITE_TEXTS } from "@/lib/types"
@@ -45,6 +47,14 @@ export default function AdminPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [showAddModal, setShowAddModal] = useState(false)
   const [dataLoading, setDataLoading] = useState(false)
+  const [savingModal, setSavingModal] = useState(false)
+
+  // Sidebar counts — loaded once at mount so badges are never stuck at 0
+  const [sidebarCounts, setSidebarCounts] = useState({ questions: 0, parties: 0, answers: 0 })
+
+  // Edit state — shared across all sections
+  const [editMode, setEditMode] = useState(false)
+  const [editingDocId, setEditingDocId] = useState<string | null>(null)
 
   // Questions state
   const [questions, setQuestions] = useState<Question[]>([])
@@ -52,7 +62,7 @@ export default function AdminPage() {
 
   // Parties state
   const [parties, setParties] = useState<Party[]>([])
-  const [newParty, setNewParty] = useState({ name: "", color: "#5B8FCB" })
+  const [newParty, setNewParty] = useState({ name: "", color: "#5B8FCB", iconFileName: "" })
 
   // Answers state
   const [answers, setAnswers] = useState<PartyAnswer[]>([])
@@ -67,6 +77,32 @@ export default function AdminPage() {
       router.push("/admin/login")
     }
   }, [loading, user, router])
+
+  // Load sidebar counts once when user is confirmed so badges are correct immediately
+  useEffect(() => {
+    if (!user) return
+    Promise.all([getQuestions(), getParties(), getPartyAnswers()])
+      .then(([qs, pts, ans]) => {
+        setSidebarCounts({ questions: qs.length, parties: pts.length, answers: ans.length })
+        // Pre-populate the active section's list so it renders instantly
+        setQuestions(qs)
+        setParties(pts)
+        setAnswers(ans)
+      })
+      .catch((err) => console.error("[admin] sidebar count load error:", err))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user])
+
+  // Keep sidebar counts in sync with live state
+  useEffect(() => {
+    setSidebarCounts((prev) => ({ ...prev, questions: questions.length }))
+  }, [questions])
+  useEffect(() => {
+    setSidebarCounts((prev) => ({ ...prev, parties: parties.length }))
+  }, [parties])
+  useEffect(() => {
+    setSidebarCounts((prev) => ({ ...prev, answers: answers.length }))
+  }, [answers])
 
   // Load data when tab changes
   useEffect(() => {
@@ -100,56 +136,138 @@ export default function AdminPage() {
     router.push("/admin/login")
   }
 
-  const handleAddQuestion = async () => {
+  // ─── Shared modal close / reset ─────────────────────────────────────────
+  const handleCloseModal = () => {
+    setShowAddModal(false)
+    setEditMode(false)
+    setEditingDocId(null)
+    setNewQuestion({ externalId: "", text: "", category: "Economía", code: "", notes: "" })
+    setNewParty({ name: "", color: "#5B8FCB", iconFileName: "" })
+    setNewAnswer({ partyId: "", questionExternalId: "", answer: "yes" })
+  }
+
+  // ─── Edit openers ────────────────────────────────────────────────────────
+  const handleEditQuestion = (q: Question) => {
+    setNewQuestion({ externalId: q.externalId, text: q.text, category: q.category, code: q.code, notes: q.notes })
+    setEditingDocId(q.docId)
+    setEditMode(true)
+    setShowAddModal(true)
+  }
+
+  const handleEditParty = (p: Party) => {
+    setNewParty({ name: p.name, color: p.color ?? "#5B8FCB", iconFileName: p.iconFileName ?? "" })
+    setEditingDocId(p.docId)
+    setEditMode(true)
+    setShowAddModal(true)
+  }
+
+  const handleEditAnswer = (a: PartyAnswer) => {
+    setNewAnswer({ partyId: a.partyId, questionExternalId: a.questionExternalId, answer: a.answer })
+    setEditingDocId(a.docId)
+    setEditMode(true)
+    setShowAddModal(true)
+  }
+
+  // ─── Submit handlers (add OR update) ────────────────────────────────────
+  const handleSubmitQuestion = async () => {
     if (!newQuestion.text.trim()) return
+    setSavingModal(true)
     try {
-      await addQuestion({
-        externalId: newQuestion.externalId.trim() || String(Date.now()),
-        text: newQuestion.text.trim(),
-        category: newQuestion.category,
-        code: newQuestion.code.trim(),
-        notes: newQuestion.notes.trim(),
-        order: questions.length,
-        active: true,
-      })
-      setNewQuestion({ externalId: "", text: "", category: "Economía", code: "", notes: "" })
-      setShowAddModal(false)
-      const updated = await getQuestions()
-      setQuestions(updated)
-      addToast("Pregunta agregada correctamente", "success")
+      if (editMode && editingDocId) {
+        await updateQuestion(editingDocId, {
+          externalId: newQuestion.externalId.trim(),
+          text: newQuestion.text.trim(),
+          category: newQuestion.category,
+          code: newQuestion.code.trim(),
+          notes: newQuestion.notes.trim(),
+        })
+        setQuestions((prev) =>
+          prev.map((q) =>
+            q.docId === editingDocId
+              ? { ...q, externalId: newQuestion.externalId.trim(), text: newQuestion.text.trim(), category: newQuestion.category, code: newQuestion.code.trim(), notes: newQuestion.notes.trim() }
+              : q,
+          ),
+        )
+        addToast("Pregunta actualizada correctamente", "success")
+      } else {
+        await addQuestion({
+          externalId: newQuestion.externalId.trim() || String(Date.now()),
+          text: newQuestion.text.trim(),
+          category: newQuestion.category,
+          code: newQuestion.code.trim(),
+          notes: newQuestion.notes.trim(),
+          order: questions.length,
+          active: true,
+        })
+        const updated = await getQuestions()
+        setQuestions(updated)
+        addToast("Pregunta agregada correctamente", "success")
+      }
+      handleCloseModal()
     } catch {
-      addToast("Error al agregar pregunta", "error")
+      addToast("Error al guardar pregunta", "error")
+    } finally {
+      setSavingModal(false)
     }
   }
 
-  const handleAddParty = async () => {
+  const handleSubmitParty = async () => {
     if (!newParty.name.trim()) return
+    setSavingModal(true)
     try {
-      await addParty({ name: newParty.name.trim(), slug: nameToSlug(newParty.name), color: newParty.color, active: true })
-      setNewParty({ name: "", color: "#5B8FCB" })
-      setShowAddModal(false)
-      const updated = await getParties()
-      setParties(updated)
-      addToast("Partido agregado correctamente", "success")
+      const slug = nameToSlug(newParty.name)
+      const iconFile = newParty.iconFileName.trim() || null
+      if (editMode && editingDocId) {
+        await updateParty(editingDocId, { name: newParty.name.trim(), slug, color: newParty.color, iconFileName: iconFile })
+        setParties((prev) =>
+          prev.map((p) =>
+            p.docId === editingDocId
+              ? { ...p, name: newParty.name.trim(), slug, color: newParty.color, iconFileName: iconFile }
+              : p,
+          ),
+        )
+        addToast("Partido actualizado correctamente", "success")
+      } else {
+        await addParty({ name: newParty.name.trim(), slug, color: newParty.color, iconFileName: iconFile, iconUrl: null, active: true })
+        const updated = await getParties()
+        setParties(updated)
+        addToast("Partido agregado correctamente", "success")
+      }
+      handleCloseModal()
     } catch {
-      addToast("Error al agregar partido", "error")
+      addToast("Error al guardar partido", "error")
+    } finally {
+      setSavingModal(false)
     }
   }
 
-  const handleAddAnswer = async () => {
+  const handleSubmitAnswer = async () => {
     if (!newAnswer.partyId || !newAnswer.questionExternalId) return
+    setSavingModal(true)
     try {
-      await addPartyAnswer({ partyId: newAnswer.partyId, questionExternalId: newAnswer.questionExternalId, answer: newAnswer.answer })
-      setNewAnswer({ partyId: "", questionExternalId: "", answer: "yes" })
-      setShowAddModal(false)
-      const updated = await getPartyAnswers()
-      setAnswers(updated)
-      addToast("Respuesta agregada correctamente", "success")
+      if (editMode && editingDocId) {
+        // Only the answer value can be changed in edit mode (partyId/questionExternalId
+        // are immutable because they form the deterministic docId).
+        await updatePartyAnswer(editingDocId, newAnswer.answer)
+        setAnswers((prev) =>
+          prev.map((a) => (a.docId === editingDocId ? { ...a, answer: newAnswer.answer } : a)),
+        )
+        addToast("Respuesta actualizada correctamente", "success")
+      } else {
+        await addPartyAnswer({ partyId: newAnswer.partyId, questionExternalId: newAnswer.questionExternalId, answer: newAnswer.answer })
+        const updated = await getPartyAnswers()
+        setAnswers(updated)
+        addToast("Respuesta agregada correctamente", "success")
+      }
+      handleCloseModal()
     } catch {
-      addToast("Error al agregar respuesta", "error")
+      addToast("Error al guardar respuesta", "error")
+    } finally {
+      setSavingModal(false)
     }
   }
 
+  // ─── Delete handlers ─────────────────────────────────────────────────────
   const handleDeleteQuestion = async (docId: string) => {
     try {
       await deleteQuestion(docId)
@@ -192,12 +310,28 @@ export default function AdminPage() {
     }
   }
 
-  const filteredQuestions = questions.filter(q => 
+  // ─── Modal helpers ────────────────────────────────────────────────────────
+  const getModalTitle = () => {
+    const entity =
+      activeSection === "questions" ? "Pregunta" :
+      activeSection === "parties" ? "Partido" : "Respuesta"
+    return editMode ? `Editar ${entity}` : `Agregar ${entity}`
+  }
+
+  const getSubmitLabel = () => (editMode ? "Guardar cambios" : "Agregar")
+
+  const getSubmitHandler = () =>
+    activeSection === "questions" ? handleSubmitQuestion :
+    activeSection === "parties" ? handleSubmitParty :
+    handleSubmitAnswer
+
+  // ─── Filtered lists ───────────────────────────────────────────────────────
+  const filteredQuestions = questions.filter(q =>
     q.text.toLowerCase().includes(searchQuery.toLowerCase()) ||
     q.category.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const filteredParties = parties.filter(p => 
+  const filteredParties = parties.filter(p =>
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
@@ -240,7 +374,7 @@ export default function AdminPage() {
         )}
       </AnimatePresence>
 
-      {/* Add Modal */}
+      {/* Add / Edit Modal */}
       <AnimatePresence>
         {showAddModal && (
           <motion.div
@@ -248,19 +382,26 @@ export default function AdminPage() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-[#111111]/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowAddModal(false)}
+            onClick={handleCloseModal}
           >
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md"
+              className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <h2 className="text-xl font-bold text-[#111111] mb-6">
-                Agregar {activeSection === "questions" ? "Pregunta" : activeSection === "parties" ? "Partido" : "Respuesta"}
-              </h2>
+              {/* Modal header */}
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-[#111111]">{getModalTitle()}</h2>
+                {editMode && (
+                  <span className="text-xs font-medium px-2.5 py-1 bg-[#5B8FCB]/10 text-[#5B8FCB] rounded-full">
+                    Modo edición
+                  </span>
+                )}
+              </div>
 
+              {/* ── Question form ── */}
               {activeSection === "questions" && (
                 <div className="space-y-4">
                   <div>
@@ -293,15 +434,10 @@ export default function AdminPage() {
                       className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
                     />
                   </div>
-                  <button
-                    onClick={handleAddQuestion}
-                    className="w-full py-3 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] transition-colors"
-                  >
-                    Agregar Pregunta
-                  </button>
                 </div>
               )}
 
+              {/* ── Party form ── */}
               {activeSection === "parties" && (
                 <div className="space-y-4">
                   <div>
@@ -314,28 +450,66 @@ export default function AdminPage() {
                       className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
                     />
                   </div>
+                  {!editMode && (
+                    <div>
+                      <label className="block text-sm font-medium text-[#6B7280] mb-2">
+                        Archivo de logo
+                        <span className="ml-1 text-[#6B7280]/60 font-normal">(opcional, ej: partido-morado.jpeg)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={newParty.iconFileName}
+                        onChange={(e) => setNewParty({ ...newParty, iconFileName: e.target.value })}
+                        placeholder="nombre-del-archivo.jpeg"
+                        className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
+                      />
+                      {(newParty.iconFileName || newParty.name) && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-xs text-[#6B7280]">Vista previa:</span>
+                          <PartyIcon
+                            slug={newParty.name ? nameToSlug(newParty.name) : ""}
+                            iconFileName={newParty.iconFileName || undefined}
+                            name={newParty.name || "Partido"}
+                            size={36}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <label className="block text-sm font-medium text-[#6B7280] mb-2">Color</label>
-                    <div className="flex gap-3">
-                      {["#5B8FCB", "#EF4444", "#6B7280", "#111111"].map((color) => (
+                    {/* Preset swatches */}
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {["#2563EB", "#DC2626", "#E11D48", "#F97316", "#7C3AED", "#16A34A", "#10B981", "#1D4ED8", "#6B7280", "#D97706", "#0891B2", "#4F46E5"].map((c) => (
                         <button
-                          key={color}
-                          onClick={() => setNewParty({ ...newParty, color })}
-                          className={`w-10 h-10 rounded-xl transition-all ${newParty.color === color ? "ring-2 ring-offset-2 ring-[#5B8FCB]" : ""}`}
-                          style={{ backgroundColor: color }}
+                          key={c}
+                          type="button"
+                          onClick={() => setNewParty((prev) => ({ ...prev, color: c }))}
+                          className={`w-9 h-9 rounded-xl transition-all ${newParty.color?.toUpperCase() === c.toUpperCase() ? "ring-2 ring-offset-2 ring-[#5B8FCB] scale-110" : "hover:scale-105"}`}
+                          style={{ backgroundColor: c }}
                         />
                       ))}
                     </div>
+                    {/* Custom hex input + live preview */}
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="w-9 h-9 rounded-xl border border-[#6B7280]/20 flex-shrink-0"
+                        style={{ backgroundColor: newParty.color ?? "#5B8FCB" }}
+                      />
+                      <input
+                        type="text"
+                        value={newParty.color ?? ""}
+                        onChange={(e) => setNewParty((prev) => ({ ...prev, color: e.target.value }))}
+                        placeholder="#5B8FCB"
+                        maxLength={7}
+                        className="flex-1 px-3 py-2 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-sm font-mono text-[#111111]"
+                      />
+                    </div>
                   </div>
-                  <button
-                    onClick={handleAddParty}
-                    className="w-full py-3 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] transition-colors"
-                  >
-                    Agregar Partido
-                  </button>
                 </div>
               )}
 
+              {/* ── Answer form ── */}
               {activeSection === "answers" && (
                 <div className="space-y-4">
                   <div>
@@ -343,26 +517,30 @@ export default function AdminPage() {
                     <select
                       value={newAnswer.partyId}
                       onChange={(e) => setNewAnswer({ ...newAnswer, partyId: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
+                      disabled={editMode}
+                      className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111] disabled:bg-[#F5F7FA] disabled:text-[#6B7280]"
                     >
                       <option value="">Seleccionar partido...</option>
                       {parties.map((p) => (
                         <option key={p.docId} value={p.docId}>{p.name}</option>
                       ))}
                     </select>
+                    {editMode && <p className="text-xs text-[#6B7280] mt-1">No editable. Para cambiar partido, elimina y crea una nueva respuesta.</p>}
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-[#6B7280] mb-2">ID de Pregunta</label>
+                    <label className="block text-sm font-medium text-[#6B7280] mb-2">Pregunta</label>
                     <select
                       value={newAnswer.questionExternalId}
                       onChange={(e) => setNewAnswer({ ...newAnswer, questionExternalId: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
+                      disabled={editMode}
+                      className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111] disabled:bg-[#F5F7FA] disabled:text-[#6B7280]"
                     >
                       <option value="">Seleccionar pregunta...</option>
                       {questions.map((q) => (
-                        <option key={q.docId} value={q.externalId}>{q.externalId} - {q.text.substring(0, 40)}...</option>
+                        <option key={q.docId} value={q.externalId}>{q.externalId} – {q.text.substring(0, 50)}…</option>
                       ))}
                     </select>
+                    {editMode && <p className="text-xs text-[#6B7280] mt-1">No editable.</p>}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-[#6B7280] mb-2">Respuesta</label>
@@ -371,7 +549,7 @@ export default function AdminPage() {
                         <button
                           key={ans}
                           onClick={() => setNewAnswer({ ...newAnswer, answer: ans })}
-                          className={`flex-1 py-2 rounded-xl font-medium transition-all ${
+                          className={`flex-1 py-2.5 rounded-xl font-medium transition-all ${
                             newAnswer.answer === ans
                               ? ans === "yes" ? "bg-[#5B8FCB] text-white" : ans === "no" ? "bg-[#EF4444] text-white" : "bg-[#6B7280] text-white"
                               : "bg-[#F5F7FA] text-[#6B7280] hover:bg-[#6B7280]/10"
@@ -382,14 +560,29 @@ export default function AdminPage() {
                       ))}
                     </div>
                   </div>
-                  <button
-                    onClick={handleAddAnswer}
-                    className="w-full py-3 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] transition-colors"
-                  >
-                    Agregar Respuesta
-                  </button>
                 </div>
               )}
+
+              {/* Modal footer */}
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={handleCloseModal}
+                  disabled={savingModal}
+                  className="flex-1 py-3 rounded-xl border border-[#6B7280]/20 text-[#6B7280] font-medium hover:bg-[#F5F7FA] transition-colors disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={getSubmitHandler()}
+                  disabled={savingModal}
+                  className="flex-1 py-3 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                >
+                  {savingModal && (
+                    <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  )}
+                  {savingModal ? "Guardando..." : getSubmitLabel()}
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}
@@ -438,12 +631,12 @@ export default function AdminPage() {
                   <span className="font-medium">{item.label}</span>
                 </div>
                 {(item.id === "questions" || item.id === "parties" || item.id === "answers") && (
-                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full transition-all ${
                     activeSection === item.id
                       ? "bg-white/20 text-white"
                       : "bg-[#F5F7FA] text-[#6B7280]"
                   }`}>
-                    {item.id === "questions" ? questions.length : item.id === "parties" ? parties.length : answers.length}
+                    {item.id === "questions" ? sidebarCounts.questions : item.id === "parties" ? sidebarCounts.parties : sidebarCounts.answers}
                   </span>
                 )}
               </button>
@@ -524,7 +717,7 @@ export default function AdminPage() {
                 {/* Add button */}
                 {activeSection !== "texts" && activeSection !== "import-export" && (
                   <button
-                    onClick={() => setShowAddModal(true)}
+                    onClick={() => { setEditMode(false); setEditingDocId(null); setShowAddModal(true) }}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] transition-colors shadow-lg shadow-[#5B8FCB]/20"
                   >
                     <Plus className="w-5 h-5" />
@@ -576,10 +769,18 @@ export default function AdminPage() {
                               </div>
                               <p className="text-[#111111] font-medium">{question.text}</p>
                             </div>
-                            <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => handleEditQuestion(question)}
+                                className="p-2 rounded-lg hover:bg-[#5B8FCB]/10 text-[#5B8FCB] transition-colors"
+                                title="Editar"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
                               <button 
                                 onClick={() => handleDeleteQuestion(question.docId)}
                                 className="p-2 rounded-lg hover:bg-[#EF4444]/10 text-[#EF4444] transition-colors"
+                                title="Eliminar"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -617,33 +818,41 @@ export default function AdminPage() {
                             className="bg-white rounded-xl p-5 border border-[#6B7280]/10 hover:shadow-md transition-all group"
                           >
                             <div className="flex items-start justify-between mb-4">
-                              <div className="flex items-center gap-3">
-                                <div 
-                                  className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold"
-                                  style={{ backgroundColor: party.color ?? "#6B7280" }}
-                                >
-                                  {party.name.charAt(0)}
-                                </div>
-                                <div>
-                                  <h3 className="font-semibold text-[#111111]">{party.name}</h3>
+                              <div className="flex items-center gap-3 min-w-0">
+                                <PartyIcon
+                                  slug={party.slug}
+                                  iconFileName={party.iconFileName ?? undefined}
+                                  name={party.name}
+                                  size={44}
+                                />
+                                <div className="min-w-0">
+                                  <h3 className="font-semibold text-[#111111] truncate">{party.name}</h3>
                                   <p className="text-sm text-[#6B7280]">{answerCount} respuestas</p>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={() => handleEditParty(party)}
+                                  className="p-2 rounded-lg hover:bg-[#5B8FCB]/10 text-[#5B8FCB] transition-colors"
+                                  title="Editar"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
                                 <button 
                                   onClick={() => handleDeleteParty(party.docId)}
                                   className="p-2 rounded-lg hover:bg-[#EF4444]/10 text-[#EF4444] transition-colors"
+                                  title="Eliminar"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
                               </div>
                             </div>
-                            <div className="w-full bg-[#F5F7FA] rounded-full h-2">
+                            <div className="w-full bg-[#F5F7FA] rounded-full h-1.5">
                               <div 
-                                className="h-2 rounded-full transition-all"
+                                className="h-1.5 rounded-full transition-all duration-500"
                                 style={{ 
                                   width: `${Math.min((answerCount / Math.max(questions.length, 1)) * 100, 100)}%`,
-                                  backgroundColor: party.color ?? "#6B7280",
+                                  backgroundColor: getPartyColor(party.slug, party.color),
                                 }}
                               />
                             </div>
@@ -694,9 +903,17 @@ export default function AdminPage() {
                                 </td>
                                 <td className="py-3 px-4">
                                   <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button
+                                      onClick={() => handleEditAnswer(answer)}
+                                      className="p-2 rounded-lg hover:bg-[#5B8FCB]/10 text-[#5B8FCB] transition-colors"
+                                      title="Editar"
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                    </button>
                                     <button 
                                       onClick={() => handleDeleteAnswer(answer.docId)}
                                       className="p-2 rounded-lg hover:bg-[#EF4444]/10 text-[#EF4444] transition-colors"
+                                      title="Eliminar"
                                     >
                                       <Trash2 className="w-4 h-4" />
                                     </button>

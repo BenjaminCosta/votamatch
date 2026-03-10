@@ -4,6 +4,8 @@ import {
   addDoc,
   deleteDoc,
   doc,
+  setDoc,
+  updateDoc,
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore"
@@ -24,15 +26,38 @@ export async function getPartyAnswers(): Promise<PartyAnswer[]> {
 }
 
 export async function addPartyAnswer(pa: Omit<PartyAnswer, "docId">): Promise<void> {
-  await addDoc(collection(db, "partyAnswers"), {
-    ...pa,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  })
+  // Use the same deterministic ID as importPartyAnswers to prevent duplicates.
+  // If this combo already exists it will be overwritten (idempotent upsert).
+  const deterministicId = `${pa.partyId}_${pa.questionExternalId}`
+  const ref = doc(db, "partyAnswers", deterministicId)
+  await setDoc(
+    ref,
+    {
+      ...pa,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  )
 }
 
 export async function deletePartyAnswer(docId: string): Promise<void> {
   await deleteDoc(doc(db, "partyAnswers", docId))
+}
+
+/**
+ * Updates a partyAnswer document.
+ * Only updates the `answer` value — partyId and questionExternalId are
+ * immutable (they form the deterministic docId). To change those, delete
+ * the document and create a new one.
+ */
+export async function updatePartyAnswer(
+  docId: string,
+  answer: "yes" | "no" | "neutral",
+): Promise<void> {
+  await updateDoc(doc(db, "partyAnswers", docId), {
+    answer,
+    updatedAt: serverTimestamp(),
+  })
 }
 
 export async function importPartyAnswers(rows: Omit<PartyAnswer, "docId">[]): Promise<void> {
@@ -68,6 +93,8 @@ export async function importPartyAnswers(rows: Omit<PartyAnswer, "docId">[]): Pr
 export interface PartyForQuiz {
   docId: string
   name: string
+  slug: string
+  iconFileName: string | null
   answers: Record<string, "yes" | "no" | "neutral">
 }
 
@@ -90,6 +117,8 @@ export async function getPartiesForQuiz(): Promise<PartyForQuiz[]> {
   return partiesSnap.docs.map((d) => ({
     docId: d.id,
     name: String(d.data().name ?? ""),
+    slug: String(d.data().slug ?? ""),
+    iconFileName: d.data().iconFileName ? String(d.data().iconFileName) : null,
     answers: answerMap.get(d.id) ?? {},
   }))
 }

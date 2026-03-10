@@ -4,6 +4,7 @@ import {
   addDoc,
   deleteDoc,
   doc,
+  updateDoc,
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore"
@@ -19,6 +20,8 @@ export async function getParties(): Promise<Party[]> {
       name: String(data.name ?? ""),
       slug: String(data.slug ?? ""),
       color: data.color ? String(data.color) : null,
+      iconUrl: data.iconUrl ? String(data.iconUrl) : null,
+      iconFileName: data.iconFileName ? String(data.iconFileName) : null,
       active: Boolean(data.active ?? true),
     }
   })
@@ -35,6 +38,16 @@ export async function addParty(p: Omit<Party, "docId">): Promise<string> {
 
 export async function deleteParty(docId: string): Promise<void> {
   await deleteDoc(doc(db, "parties", docId))
+}
+
+export async function updateParty(
+  docId: string,
+  data: Partial<Omit<Party, "docId">>,
+): Promise<void> {
+  await updateDoc(doc(db, "parties", docId), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  })
 }
 
 export async function importParties(rows: Omit<Party, "docId">[]): Promise<Map<string, string>> {

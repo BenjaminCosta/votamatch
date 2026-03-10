@@ -3,15 +3,7 @@
 import { motion } from "framer-motion"
 import Image from "next/image"
 
-interface LoadingScreenProps {
-  title?: string
-  subtitle?: string
-}
-
-export function LoadingScreen({
-  title = "Calculando tu afinidad política…",
-  subtitle = "Esto tomará solo unos segundos.",
-}: LoadingScreenProps) {
+export function LoadingScreen() {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -55,24 +47,6 @@ export function LoadingScreen({
             <div className="w-3 h-3 bg-[#5B8FCB] rounded-full" />
           </motion.div>
         </div>
-
-        {/* Text */}
-        <motion.h2
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="text-xl font-semibold text-[#111111] mb-2"
-        >
-          {title}
-        </motion.h2>
-        <motion.p
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="text-[#6B7280]"
-        >
-          {subtitle}
-        </motion.p>
 
         {/* Progress steps */}
         <motion.div
