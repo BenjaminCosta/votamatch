@@ -10,42 +10,11 @@ import { ConfirmModal } from "@/components/ConfirmModal"
 import { LoadingScreen } from "@/components/LoadingScreen"
 import { ChevronLeft, ChevronRight, Home } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
-
-const mockQuestions = [
-  "¿Deberían aumentarse los impuestos a las grandes empresas?",
-  "¿Está de acuerdo con legalizar el uso recreativo de la marihuana?",
-  "¿Debería el Estado invertir más en educación pública?",
-  "¿Apoya la construcción de más cárceles para reducir la delincuencia?",
-  "¿Cree que debería permitirse el matrimonio entre personas del mismo sexo?",
-  "¿Está a favor de reducir las regulaciones ambientales para promover el crecimiento económico?",
-  "¿Apoya el aumento del salario mínimo?",
-  "¿Debería existir un sistema de salud universal gratuito?",
-  "¿Está de acuerdo con fortalecer las políticas de inmigración?",
-  "¿Cree que el gobierno debería subsidiar la energía renovable?",
-  "¿Apoya la privatización de empresas estatales?",
-  "¿Está de acuerdo con implementar más programas sociales?",
-  "¿Debería reducirse el gasto militar?",
-  "¿Apoya la descentralización del poder político?",
-  "¿Cree que debería existir una renta básica universal?",
-  "¿Está a favor de endurecer las penas por corrupción?",
-  "¿Apoya la inversión en infraestructura de transporte público?",
-  "¿Debería el Estado regular los precios de productos básicos?",
-  "¿Está de acuerdo con promover la minería responsable?",
-  "¿Cree que debería existir educación sexual en las escuelas?",
-  "¿Apoya la protección de territorios indígenas?",
-  "¿Está a favor de reducir la burocracia estatal?",
-  "¿Debería permitirse la eutanasia?",
-  "¿Apoya el acceso libre al aborto?",
-  "¿Cree que debería fortalecerse la policía?",
-  "¿Está de acuerdo con implementar peajes urbanos?",
-  "¿Apoya la educación bilingüe en zonas rurales?",
-  "¿Debería el Estado controlar los medios de comunicación?",
-  "¿Está a favor de reducir la edad de jubilación?",
-  "¿Apoya tratados de libre comercio?",
-  "¿Cree que debería existir servicio militar obligatorio?",
-  "¿Está de acuerdo con aumentar el presupuesto para ciencia y tecnología?",
-  "¿Apoya la reforma del sistema judicial?",
-]
+import { getQuestions } from "@/lib/firestore/questions"
+import { getPartiesForQuiz, type PartyForQuiz } from "@/lib/firestore/partyAnswers"
+import { saveResponse } from "@/lib/firestore/responses"
+import { calculateMatch } from "@/lib/quiz"
+import type { Question } from "@/lib/types"
 
 interface Answer {
   answer: "yes" | "no" | "neutral"
@@ -64,6 +33,13 @@ export default function QuizPage() {
   const [keyPressed, setKeyPressed] = useState<"yes" | "no" | "neutral" | null>(null)
   const [showValidationError, setShowValidationError] = useState(false)
   const [shake, setShake] = useState(false)
+  const [firestoreQuestions, setFirestoreQuestions] = useState<Question[]>([])
+  const [firestoreParties, setFirestoreParties] = useState<PartyForQuiz[]>([])
+  const [dataLoading, setDataLoading] = useState(true)
+  const [fetchError, setFetchError] = useState(false)
+  const [saveError, setSaveError] = useState(false)
+
+  const quizQuestions = firestoreQuestions
   
   // Touch gesture refs
   const touchStartX = useRef<number>(0)
@@ -83,12 +59,34 @@ export default function QuizPage() {
   }, [currentQuestion, isImportant])
 
   // Finish quiz handler
-  const handleFinishQuiz = useCallback(() => {
+  const handleFinishQuiz = useCallback(async () => {
     setIsLoading(true)
-    setTimeout(() => {
-      router.push("/result")
-    }, 2500)
-  }, [router])
+    try {
+      const userAnswersList = Object.entries(answers).flatMap(([idxStr, ans]) => {
+        const externalId = firestoreQuestions[parseInt(idxStr)]?.externalId
+        // Skip answers whose question has no externalId to keep IDs consistent
+        if (!externalId) return []
+        return [{ questionExternalId: externalId, answer: ans.answer, important: ans.important }]
+      })
+      const results = firestoreParties
+        .map((party) => ({
+          partyId: party.docId,
+          partyName: party.name,
+          percentage: calculateMatch(userAnswersList, party.answers),
+        }))
+        .sort((a, b) => b.percentage - a.percentage)
+      if (firestoreParties.length > 0) {
+        await saveResponse({
+          answers: answers as Record<number, { answer: "yes" | "no" | "neutral"; important: boolean }>,
+          results,
+        })
+      }
+    } catch (err) {
+      console.error("[quiz] saveResponse failed:", err)
+      setSaveError(true)
+    }
+    setTimeout(() => router.push("/result"), 2500)
+  }, [router, answers, firestoreQuestions, firestoreParties])
 
   // Navigation handlers
   const goToNext = useCallback(() => {
@@ -100,7 +98,7 @@ export default function QuizPage() {
       return
     }
     
-    if (currentQuestion < mockQuestions.length - 1) {
+    if (currentQuestion < quizQuestions.length - 1) {
       setDirection(1)
       setCurrentQuestion((prev) => prev + 1)
       setIsImportant(answers[currentQuestion + 1]?.important || false)
@@ -108,7 +106,7 @@ export default function QuizPage() {
     } else {
       handleFinishQuiz()
     }
-  }, [currentQuestion, answers, handleFinishQuiz])
+  }, [currentQuestion, answers, handleFinishQuiz, quizQuestions.length])
 
   const goToPrevious = useCallback(() => {
     if (currentQuestion > 0) {
@@ -205,6 +203,26 @@ export default function QuizPage() {
     return () => window.removeEventListener("popstate", handlePopState)
   }, [answers, isLoading])
 
+  // Load questions and party answers from Firestore
+  const loadData = useCallback(() => {
+    setDataLoading(true)
+    setFetchError(false)
+    Promise.all([getQuestions(), getPartiesForQuiz()])
+      .then(([qs, parties]) => {
+        setFirestoreQuestions(qs.filter((q) => q.active))
+        setFirestoreParties(parties.filter((p) => p.docId))
+      })
+      .catch((err) => {
+        console.error("[quiz] loadData failed:", err)
+        setFetchError(true)
+      })
+      .finally(() => setDataLoading(false))
+  }, [])
+
+  useEffect(() => {
+    loadData()
+  }, [loadData])
+
   const handleExitAttempt = (destination: string) => {
     if (Object.keys(answers).length > 0) {
       setShowExitModal(true)
@@ -243,7 +261,44 @@ export default function QuizPage() {
   }
 
   if (isLoading) {
+    return (
+      <>
+        <LoadingScreen />
+        {saveError && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-9999 bg-[#EF4444]/90 text-white px-5 py-3 rounded-xl text-sm shadow-xl backdrop-blur-sm whitespace-nowrap">
+            Error al guardar resultados. Redirigiendo igualmente…
+          </div>
+        )}
+      </>
+    )
+  }
+
+  if (dataLoading) {
     return <LoadingScreen />
+  }
+
+  if (fetchError) {
+    return (
+      <main className="min-h-screen flex flex-col items-center justify-center bg-white gap-4 p-6">
+        <p className="text-slate-500 text-lg text-center">
+          Error al cargar el cuestionario. Verifica tu conexión.
+        </p>
+        <button
+          onClick={loadData}
+          className="px-6 py-3 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] transition-colors"
+        >
+          Reintentar
+        </button>
+      </main>
+    )
+  }
+
+  if (quizQuestions.length === 0) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-white">
+        <p className="text-slate-500 text-lg">No hay preguntas disponibles. Vuelve pronto.</p>
+      </main>
+    )
   }
 
   return (
@@ -291,7 +346,7 @@ export default function QuizPage() {
             transition={{ delay: 0.1 }}
             className="mb-4 sm:mb-8"
           >
-            <ProgressBar current={currentQuestion + 1} total={mockQuestions.length} />
+            <ProgressBar current={currentQuestion + 1} total={quizQuestions.length} />
           </motion.div>
 
           {/* Question card with animation */}
@@ -308,7 +363,7 @@ export default function QuizPage() {
                 className={`absolute inset-0 ${shake ? "animate-shake" : ""}`}
               >
                 <QuestionCard
-                  question={mockQuestions[currentQuestion]}
+                  question={quizQuestions[currentQuestion]?.text ?? ""}
                   onAnswer={handleAnswer}
                   selectedAnswer={currentAnswer}
                   keyPressed={keyPressed}
@@ -356,7 +411,7 @@ export default function QuizPage() {
                 onClick={goToNext}
                 className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] hover:shadow-lg hover:shadow-[#5B8FCB]/25 transition-all duration-200"
               >
-                <span>{currentQuestion === mockQuestions.length - 1 ? "Ver resultados" : "Siguiente"}</span>
+                <span>{currentQuestion === quizQuestions.length - 1 ? "Ver resultados" : "Siguiente"}</span>
                 <ChevronRight className="w-5 h-5" />
               </button>
             </div>

@@ -6,6 +6,21 @@ import Image from "next/image"
 import Link from "next/link"
 import { Eye, EyeOff, ArrowLeft, AlertCircle, Loader2 } from "lucide-react"
 import { motion } from "framer-motion"
+import { signInWithEmailAndPassword } from "firebase/auth"
+import { auth } from "@/lib/firebase"
+import { useAuth } from "@/providers/AuthProvider"
+
+function getAuthErrorMessage(code: string): string {
+  switch (code) {
+    case "auth/invalid-email": return "El correo electrónico no es válido."
+    case "auth/user-not-found": return "No existe una cuenta con ese correo."
+    case "auth/wrong-password": return "Contraseña incorrecta."
+    case "auth/invalid-credential": return "Credenciales incorrectas. Verifica e intenta de nuevo."
+    case "auth/too-many-requests": return "Demasiados intentos fallidos. Espera unos minutos."
+    case "auth/user-disabled": return "Esta cuenta ha sido deshabilitada."
+    default: return "Error al iniciar sesión. Intenta de nuevo."
+  }
+}
 
 export default function AdminLoginPage() {
   const router = useRouter()
@@ -15,28 +30,32 @@ export default function AdminLoginPage() {
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
+  const { user, loading } = useAuth()
+
   useEffect(() => {
-    // Check if already logged in
-    const isLoggedIn = localStorage.getItem("votamatch_admin_logged")
-    if (isLoggedIn === "true") {
+    if (!loading && user) {
       router.push("/admin")
     }
-  }, [router])
+  }, [loading, user, router])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F5F7FA] flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[#5B8FCB]" />
+      </div>
+    )
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
     setIsLoading(true)
-
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 800))
-
-    // Mock authentication
-    if (email === "admin@votamatch.pe" && password === "admin123") {
-      localStorage.setItem("votamatch_admin_logged", "true")
+    try {
+      await signInWithEmailAndPassword(auth, email, password)
       router.push("/admin")
-    } else {
-      setError("Credenciales incorrectas. Intenta de nuevo.")
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code ?? ""
+      setError(getAuthErrorMessage(code))
       setIsLoading(false)
     }
   }
@@ -86,7 +105,7 @@ export default function AdminLoginPage() {
                 animate={{ opacity: 1, y: 0 }}
                 className="flex items-center gap-3 p-4 rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/20"
               >
-                <AlertCircle className="w-5 h-5 text-[#EF4444] flex-shrink-0" />
+                <AlertCircle className="w-5 h-5 text-[#EF4444] shrink-0" />
                 <p className="text-sm text-[#EF4444]">{error}</p>
               </motion.div>
             )}
@@ -164,11 +183,6 @@ export default function AdminLoginPage() {
             </Link>
           </div>
         </div>
-
-        {/* Hint text for demo */}
-        <p className="mt-4 text-center text-xs text-[#6B7280]">
-          Demo: admin@votamatch.pe / admin123
-        </p>
       </motion.div>
     </div>
   )

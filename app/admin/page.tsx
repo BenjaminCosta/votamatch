@@ -4,40 +4,25 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import Link from "next/link"
-import { FileText, Building2, MessageSquare, Type, Menu, X, Plus, Search, Home, ChevronRight, Edit2, Trash2, Save, LogOut, User, UploadCloud } from "lucide-react"
+import { FileText, Building2, MessageSquare, Type, Menu, X, Plus, Search, Home, ChevronRight, Trash2, Save, LogOut, User, UploadCloud } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { EmptyState } from "@/components/EmptyState"
 import { ImportExportSection } from "@/components/ImportExportSection"
 import { useToast } from "@/components/Toast"
-
-const initialQuestions = [
-  { id: 1, text: "¿Deberían aumentarse los impuestos a las grandes empresas?", category: "Economía" },
-  { id: 2, text: "¿Está de acuerdo con legalizar el uso recreativo de la marihuana?", category: "Social" },
-  { id: 3, text: "¿Debería el Estado invertir más en educación pública?", category: "Educación" },
-  { id: 4, text: "¿Apoya la construcción de más cárceles para reducir la delincuencia?", category: "Seguridad" },
-  { id: 5, text: "¿Cree que debería permitirse el matrimonio entre personas del mismo sexo?", category: "Social" },
-]
-
-const initialParties = [
-  { id: 1, name: "Partido Morado", questions: 33, color: "#5B8FCB" },
-  { id: 2, name: "Acción Popular", questions: 33, color: "#EF4444" },
-  { id: 3, name: "Fuerza Popular", questions: 30, color: "#6B7280" },
-  { id: 4, name: "Alianza para el Progreso", questions: 28, color: "#5B8FCB" },
-  { id: 5, name: "Perú Libre", questions: 25, color: "#EF4444" },
-]
-
-const initialAnswers = [
-  { id: 1, party: "Partido Morado", question: 1, answer: "Sí" },
-  { id: 2, party: "Acción Popular", question: 1, answer: "No" },
-  { id: 3, party: "Fuerza Popular", question: 1, answer: "Neutral" },
-  { id: 4, party: "Partido Morado", question: 2, answer: "Sí" },
-  { id: 5, party: "Acción Popular", question: 2, answer: "No" },
-]
+import { useAuth } from "@/providers/AuthProvider"
+import { signOut } from "firebase/auth"
+import { auth } from "@/lib/firebase"
+import { getQuestions, addQuestion, deleteQuestion } from "@/lib/firestore/questions"
+import { getParties, addParty, deleteParty, nameToSlug } from "@/lib/firestore/parties"
+import { getPartyAnswers, addPartyAnswer, deletePartyAnswer } from "@/lib/firestore/partyAnswers"
+import { getSiteTexts, saveSiteTexts } from "@/lib/firestore/siteTexts"
+import type { Question, Party, PartyAnswer, SiteTexts } from "@/lib/types"
+import { DEFAULT_SITE_TEXTS } from "@/lib/types"
 
 const sidebarItems = [
-  { id: "questions", label: "Preguntas", icon: FileText, count: 33 },
-  { id: "parties", label: "Partidos", icon: Building2, count: 8 },
-  { id: "answers", label: "Respuestas", icon: MessageSquare, count: 264 },
+  { id: "questions", label: "Preguntas", icon: FileText },
+  { id: "parties", label: "Partidos", icon: Building2 },
+  { id: "answers", label: "Respuestas", icon: MessageSquare },
   { id: "texts", label: "Textos", icon: Type },
   { id: "import-export", label: "Importar / Exportar", icon: UploadCloud },
 ]
@@ -54,92 +39,157 @@ export default function AdminPage() {
   const { addToast } = useToast()
   
   // All hooks must be called unconditionally at the top
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const { user, loading } = useAuth()
   const [activeSection, setActiveSection] = useState("questions")
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
-  const [editingId, setEditingId] = useState<number | null>(null)
   const [showAddModal, setShowAddModal] = useState(false)
-  
-  // State for questions
-  const [questions, setQuestions] = useState(initialQuestions)
-  const [newQuestion, setNewQuestion] = useState({ text: "", category: "Economía" })
+  const [dataLoading, setDataLoading] = useState(false)
 
-  // State for parties
-  const [parties, setParties] = useState(initialParties)
+  // Questions state
+  const [questions, setQuestions] = useState<Question[]>([])
+  const [newQuestion, setNewQuestion] = useState({ externalId: "", text: "", category: "Economía", code: "", notes: "" })
+
+  // Parties state
+  const [parties, setParties] = useState<Party[]>([])
   const [newParty, setNewParty] = useState({ name: "", color: "#5B8FCB" })
 
-  // State for answers
-  const [answers, setAnswers] = useState(initialAnswers)
-  const [newAnswer, setNewAnswer] = useState({ party: "", question: 1, answer: "Sí" })
+  // Answers state
+  const [answers, setAnswers] = useState<PartyAnswer[]>([])
+  const [newAnswer, setNewAnswer] = useState({ partyId: "", questionExternalId: "", answer: "yes" as "yes" | "no" | "neutral" })
 
-  // State for texts
-  const [texts, setTexts] = useState({
-    title: "Descubre con qué partido coincides",
-    description: "Responde 33 preguntas sobre temas clave del país. Te tomará menos de 5 minutos.",
-    buttonText: "Comenzar cuestionario",
-    resultsMessage: "¡Tus resultados están listos! Basado en tus respuestas, estos son los partidos con los que más coincides.",
-  })
+  // Texts state
+  const [texts, setTexts] = useState<SiteTexts>(DEFAULT_SITE_TEXTS)
+  const [savingTexts, setSavingTexts] = useState(false)
 
-  // Auth check
   useEffect(() => {
-    const isLoggedIn = localStorage.getItem("votamatch_admin_logged")
-    if (isLoggedIn !== "true") {
+    if (!loading && !user) {
       router.push("/admin/login")
-    } else {
-      setIsAuthenticated(true)
     }
-  }, [router])
+  }, [loading, user, router])
 
-  const handleLogout = () => {
-    localStorage.removeItem("votamatch_admin_logged")
+  // Load data when tab changes
+  useEffect(() => {
+    if (!user) return
+    setDataLoading(true)
+    const loaders: Record<string, () => Promise<void>> = {
+      questions: () => getQuestions().then(setQuestions),
+      parties: () =>
+        // Also load answers + questions so the progress bar denominator is accurate
+        Promise.all([getParties(), getPartyAnswers(), getQuestions()]).then(([pts, ans, qs]) => {
+          setParties(pts)
+          setAnswers(ans)
+          setQuestions(qs)
+        }),
+      answers: () =>
+        // Load questions too so the Add Answer modal dropdown is populated
+        Promise.all([getPartyAnswers(), getParties(), getQuestions()]).then(([ans, pts, qs]) => {
+          setAnswers(ans)
+          setParties(pts)
+          setQuestions(qs)
+        }),
+      texts: () => getSiteTexts().then(setTexts),
+    }
+    ;(loaders[activeSection] ?? (() => Promise.resolve()))()
+      .catch((err) => console.error("[admin] load error:", err))
+      .finally(() => setDataLoading(false))
+  }, [activeSection, user])
+
+  const handleLogout = async () => {
+    await signOut(auth)
     router.push("/admin/login")
   }
 
-  const handleAddQuestion = () => {
-    if (newQuestion.text.trim()) {
-      setQuestions([...questions, { id: questions.length + 1, ...newQuestion }])
-      setNewQuestion({ text: "", category: "Economía" })
+  const handleAddQuestion = async () => {
+    if (!newQuestion.text.trim()) return
+    try {
+      await addQuestion({
+        externalId: newQuestion.externalId.trim() || String(Date.now()),
+        text: newQuestion.text.trim(),
+        category: newQuestion.category,
+        code: newQuestion.code.trim(),
+        notes: newQuestion.notes.trim(),
+        order: questions.length,
+        active: true,
+      })
+      setNewQuestion({ externalId: "", text: "", category: "Economía", code: "", notes: "" })
       setShowAddModal(false)
+      const updated = await getQuestions()
+      setQuestions(updated)
       addToast("Pregunta agregada correctamente", "success")
+    } catch {
+      addToast("Error al agregar pregunta", "error")
     }
   }
 
-  const handleAddParty = () => {
-    if (newParty.name.trim()) {
-      setParties([...parties, { id: parties.length + 1, questions: 0, ...newParty }])
+  const handleAddParty = async () => {
+    if (!newParty.name.trim()) return
+    try {
+      await addParty({ name: newParty.name.trim(), slug: nameToSlug(newParty.name), color: newParty.color, active: true })
       setNewParty({ name: "", color: "#5B8FCB" })
       setShowAddModal(false)
+      const updated = await getParties()
+      setParties(updated)
       addToast("Partido agregado correctamente", "success")
+    } catch {
+      addToast("Error al agregar partido", "error")
     }
   }
 
-  const handleAddAnswer = () => {
-    if (newAnswer.party.trim()) {
-      setAnswers([...answers, { id: answers.length + 1, ...newAnswer }])
-      setNewAnswer({ party: "", question: 1, answer: "Sí" })
+  const handleAddAnswer = async () => {
+    if (!newAnswer.partyId || !newAnswer.questionExternalId) return
+    try {
+      await addPartyAnswer({ partyId: newAnswer.partyId, questionExternalId: newAnswer.questionExternalId, answer: newAnswer.answer })
+      setNewAnswer({ partyId: "", questionExternalId: "", answer: "yes" })
       setShowAddModal(false)
+      const updated = await getPartyAnswers()
+      setAnswers(updated)
       addToast("Respuesta agregada correctamente", "success")
+    } catch {
+      addToast("Error al agregar respuesta", "error")
     }
   }
 
-  const handleDeleteQuestion = (id: number) => {
-    setQuestions(questions.filter(q => q.id !== id))
-    addToast("Pregunta eliminada", "info")
+  const handleDeleteQuestion = async (docId: string) => {
+    try {
+      await deleteQuestion(docId)
+      setQuestions((prev) => prev.filter((q) => q.docId !== docId))
+      addToast("Pregunta eliminada", "info")
+    } catch {
+      addToast("Error al eliminar pregunta", "error")
+    }
   }
 
-  const handleDeleteParty = (id: number) => {
-    setParties(parties.filter(p => p.id !== id))
-    addToast("Partido eliminado", "info")
+  const handleDeleteParty = async (docId: string) => {
+    try {
+      await deleteParty(docId)
+      setParties((prev) => prev.filter((p) => p.docId !== docId))
+      addToast("Partido eliminado", "info")
+    } catch {
+      addToast("Error al eliminar partido", "error")
+    }
   }
 
-  const handleDeleteAnswer = (id: number) => {
-    setAnswers(answers.filter(a => a.id !== id))
-    addToast("Respuesta eliminada", "info")
+  const handleDeleteAnswer = async (docId: string) => {
+    try {
+      await deletePartyAnswer(docId)
+      setAnswers((prev) => prev.filter((a) => a.docId !== docId))
+      addToast("Respuesta eliminada", "info")
+    } catch {
+      addToast("Error al eliminar respuesta", "error")
+    }
   }
 
-  const handleSaveTexts = () => {
-    addToast("Textos guardados correctamente", "success")
+  const handleSaveTexts = async () => {
+    setSavingTexts(true)
+    try {
+      await saveSiteTexts(texts)
+      addToast("Textos guardados correctamente", "success")
+    } catch {
+      addToast("Error al guardar textos", "error")
+    } finally {
+      setSavingTexts(false)
+    }
   }
 
   const filteredQuestions = questions.filter(q => 
@@ -151,12 +201,15 @@ export default function AdminPage() {
     p.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const filteredAnswers = answers.filter(a => 
-    a.party.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredAnswers = answers.filter(a => {
+    const q = searchQuery.toLowerCase()
+    return (
+      parties.find(p => p.docId === a.partyId)?.name.toLowerCase().includes(q) ||
+      questions.find(q2 => q2.externalId === a.questionExternalId)?.text.toLowerCase().includes(q)
+    )
+  })
 
-  // Show loading while checking auth
-  if (isAuthenticated === null) {
+  if (loading || !user) {
     return (
       <div className="min-h-screen bg-[#F5F7FA] flex items-center justify-center">
         <div className="animate-spin w-8 h-8 border-4 border-[#5B8FCB] border-t-transparent rounded-full" />
@@ -211,6 +264,16 @@ export default function AdminPage() {
               {activeSection === "questions" && (
                 <div className="space-y-4">
                   <div>
+                    <label className="block text-sm font-medium text-[#6B7280] mb-2">ID externo</label>
+                    <input
+                      type="text"
+                      value={newQuestion.externalId}
+                      onChange={(e) => setNewQuestion({ ...newQuestion, externalId: e.target.value })}
+                      placeholder="Ej: P001"
+                      className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
+                    />
+                  </div>
+                  <div>
                     <label className="block text-sm font-medium text-[#6B7280] mb-2">Pregunta</label>
                     <textarea
                       value={newQuestion.text}
@@ -222,16 +285,13 @@ export default function AdminPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-[#6B7280] mb-2">Categoría</label>
-                    <select
+                    <input
+                      type="text"
                       value={newQuestion.category}
                       onChange={(e) => setNewQuestion({ ...newQuestion, category: e.target.value })}
+                      placeholder="Economía, Social, Educación..."
                       className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
-                    >
-                      <option value="Economía">Economía</option>
-                      <option value="Social">Social</option>
-                      <option value="Educación">Educación</option>
-                      <option value="Seguridad">Seguridad</option>
-                    </select>
+                    />
                   </div>
                   <button
                     onClick={handleAddQuestion}
@@ -281,42 +341,43 @@ export default function AdminPage() {
                   <div>
                     <label className="block text-sm font-medium text-[#6B7280] mb-2">Partido</label>
                     <select
-                      value={newAnswer.party}
-                      onChange={(e) => setNewAnswer({ ...newAnswer, party: e.target.value })}
+                      value={newAnswer.partyId}
+                      onChange={(e) => setNewAnswer({ ...newAnswer, partyId: e.target.value })}
                       className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
                     >
                       <option value="">Seleccionar partido...</option>
                       {parties.map((p) => (
-                        <option key={p.id} value={p.name}>{p.name}</option>
+                        <option key={p.docId} value={p.docId}>{p.name}</option>
                       ))}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-[#6B7280] mb-2">Pregunta</label>
+                    <label className="block text-sm font-medium text-[#6B7280] mb-2">ID de Pregunta</label>
                     <select
-                      value={newAnswer.question}
-                      onChange={(e) => setNewAnswer({ ...newAnswer, question: parseInt(e.target.value) })}
+                      value={newAnswer.questionExternalId}
+                      onChange={(e) => setNewAnswer({ ...newAnswer, questionExternalId: e.target.value })}
                       className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
                     >
+                      <option value="">Seleccionar pregunta...</option>
                       {questions.map((q) => (
-                        <option key={q.id} value={q.id}>#{q.id} - {q.text.substring(0, 40)}...</option>
+                        <option key={q.docId} value={q.externalId}>{q.externalId} - {q.text.substring(0, 40)}...</option>
                       ))}
                     </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-[#6B7280] mb-2">Respuesta</label>
                     <div className="flex gap-2">
-                      {["Sí", "No", "Neutral"].map((ans) => (
+                      {(["yes", "no", "neutral"] as const).map((ans) => (
                         <button
                           key={ans}
                           onClick={() => setNewAnswer({ ...newAnswer, answer: ans })}
                           className={`flex-1 py-2 rounded-xl font-medium transition-all ${
                             newAnswer.answer === ans
-                              ? ans === "Sí" ? "bg-[#5B8FCB] text-white" : ans === "No" ? "bg-[#EF4444] text-white" : "bg-[#6B7280] text-white"
+                              ? ans === "yes" ? "bg-[#5B8FCB] text-white" : ans === "no" ? "bg-[#EF4444] text-white" : "bg-[#6B7280] text-white"
                               : "bg-[#F5F7FA] text-[#6B7280] hover:bg-[#6B7280]/10"
                           }`}
                         >
-                          {ans}
+                          {ans === "yes" ? "Sí" : ans === "no" ? "No" : "Neutral"}
                         </button>
                       ))}
                     </div>
@@ -376,13 +437,13 @@ export default function AdminPage() {
                   <item.icon className={`w-5 h-5 ${activeSection === item.id ? "text-white" : "text-[#6B7280] group-hover:text-[#111111]"}`} />
                   <span className="font-medium">{item.label}</span>
                 </div>
-                {item.count && (
+                {(item.id === "questions" || item.id === "parties" || item.id === "answers") && (
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                     activeSection === item.id
                       ? "bg-white/20 text-white"
                       : "bg-[#F5F7FA] text-[#6B7280]"
                   }`}>
-                    {item.id === "questions" ? questions.length : item.id === "parties" ? parties.length : item.id === "answers" ? answers.length : item.count}
+                    {item.id === "questions" ? questions.length : item.id === "parties" ? parties.length : answers.length}
                   </span>
                 )}
               </button>
@@ -421,15 +482,8 @@ export default function AdminPage() {
             <div className="flex items-center gap-3">
               <div className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl bg-[#F5F7FA]">
                 <User className="w-4 h-4 text-[#6B7280]" />
-                <span className="text-sm text-[#111111] font-medium">Admin</span>
+                <span className="text-sm text-[#111111] font-medium">{user.email?.split("@")[0] ?? "Admin"}</span>
               </div>
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-[#EF4444] hover:bg-[#EF4444]/10 transition-all text-sm font-medium"
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden sm:inline">Cerrar sesión</span>
-              </button>
             </div>
           </div>
         </div>
@@ -492,7 +546,11 @@ export default function AdminPage() {
                 {/* Questions Section */}
                 {activeSection === "questions" && (
                   <div className="space-y-3">
-                    {filteredQuestions.length === 0 ? (
+                    {dataLoading ? (
+                      <div className="flex justify-center py-12">
+                        <div className="animate-spin w-8 h-8 border-4 border-[#5B8FCB] border-t-transparent rounded-full" />
+                      </div>
+                    ) : filteredQuestions.length === 0 ? (
                       <EmptyState
                         type="questions"
                         onAction={() => setShowAddModal(true)}
@@ -500,17 +558,17 @@ export default function AdminPage() {
                     ) : (
                       filteredQuestions.map((question, index) => (
                         <motion.div
-                          key={question.id}
+                          key={question.docId}
                           initial={{ opacity: 0, y: 20 }}
                           animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: index * 0.05 }}
+                          transition={{ delay: index * 0.03 }}
                           className="bg-white rounded-xl p-4 border border-[#6B7280]/10 hover:shadow-md transition-all group"
                         >
                           <div className="flex items-start justify-between gap-4">
                             <div className="flex-1">
                               <div className="flex items-center gap-2 mb-2">
                                 <span className="text-xs font-semibold text-[#6B7280] bg-[#F5F7FA] px-2 py-1 rounded-lg">
-                                  #{question.id}
+                                  {question.externalId || `#${index + 1}`}
                                 </span>
                                 <span className={`text-xs font-medium px-2 py-1 rounded-lg ${categoryColors[question.category]?.bg || "bg-[#F5F7FA]"} ${categoryColors[question.category]?.text || "text-[#6B7280]"}`}>
                                   {question.category}
@@ -519,11 +577,8 @@ export default function AdminPage() {
                               <p className="text-[#111111] font-medium">{question.text}</p>
                             </div>
                             <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button className="p-2 rounded-lg hover:bg-[#5B8FCB]/10 text-[#5B8FCB] transition-colors">
-                                <Edit2 className="w-4 h-4" />
-                              </button>
                               <button 
-                                onClick={() => handleDeleteQuestion(question.id)}
+                                onClick={() => handleDeleteQuestion(question.docId)}
                                 className="p-2 rounded-lg hover:bg-[#EF4444]/10 text-[#EF4444] transition-colors"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -539,7 +594,11 @@ export default function AdminPage() {
                 {/* Parties Section */}
                 {activeSection === "parties" && (
                   <div className="grid md:grid-cols-2 gap-4">
-                    {filteredParties.length === 0 ? (
+                    {dataLoading ? (
+                      <div className="md:col-span-2 flex justify-center py-12">
+                        <div className="animate-spin w-8 h-8 border-4 border-[#5B8FCB] border-t-transparent rounded-full" />
+                      </div>
+                    ) : filteredParties.length === 0 ? (
                       <div className="md:col-span-2">
                         <EmptyState
                           type="parties"
@@ -547,50 +606,50 @@ export default function AdminPage() {
                         />
                       </div>
                     ) : (
-                      filteredParties.map((party, index) => (
-                        <motion.div
-                          key={party.id}
-                          initial={{ opacity: 0, scale: 0.95 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          transition={{ delay: index * 0.05 }}
-                          className="bg-white rounded-xl p-5 border border-[#6B7280]/10 hover:shadow-md transition-all group"
-                        >
-                          <div className="flex items-start justify-between mb-4">
-                            <div className="flex items-center gap-3">
+                      filteredParties.map((party, index) => {
+                        const answerCount = answers.filter((a) => a.partyId === party.docId).length
+                        return (
+                          <motion.div
+                            key={party.docId}
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: index * 0.05 }}
+                            className="bg-white rounded-xl p-5 border border-[#6B7280]/10 hover:shadow-md transition-all group"
+                          >
+                            <div className="flex items-start justify-between mb-4">
+                              <div className="flex items-center gap-3">
+                                <div 
+                                  className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold"
+                                  style={{ backgroundColor: party.color ?? "#6B7280" }}
+                                >
+                                  {party.name.charAt(0)}
+                                </div>
+                                <div>
+                                  <h3 className="font-semibold text-[#111111]">{party.name}</h3>
+                                  <p className="text-sm text-[#6B7280]">{answerCount} respuestas</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                  onClick={() => handleDeleteParty(party.docId)}
+                                  className="p-2 rounded-lg hover:bg-[#EF4444]/10 text-[#EF4444] transition-colors"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="w-full bg-[#F5F7FA] rounded-full h-2">
                               <div 
-                                className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold"
-                                style={{ backgroundColor: party.color }}
-                              >
-                                {party.name.charAt(0)}
-                              </div>
-                              <div>
-                                <h3 className="font-semibold text-[#111111]">{party.name}</h3>
-                                <p className="text-sm text-[#6B7280]">{party.questions} respuestas</p>
-                              </div>
+                                className="h-2 rounded-full transition-all"
+                                style={{ 
+                                  width: `${Math.min((answerCount / Math.max(questions.length, 1)) * 100, 100)}%`,
+                                  backgroundColor: party.color ?? "#6B7280",
+                                }}
+                              />
                             </div>
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button className="p-2 rounded-lg hover:bg-[#5B8FCB]/10 text-[#5B8FCB] transition-colors">
-                                <Edit2 className="w-4 h-4" />
-                              </button>
-                              <button 
-                                onClick={() => handleDeleteParty(party.id)}
-                                className="p-2 rounded-lg hover:bg-[#EF4444]/10 text-[#EF4444] transition-colors"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-                          <div className="w-full bg-[#F5F7FA] rounded-full h-2">
-                            <div 
-                              className="h-2 rounded-full transition-all"
-                              style={{ 
-                                width: `${(party.questions / 33) * 100}%`,
-                                backgroundColor: party.color 
-                              }}
-                            />
-                          </div>
-                        </motion.div>
-                      ))
+                          </motion.div>
+                        )
+                      })
                     )}
                   </div>
                 )}
@@ -598,7 +657,11 @@ export default function AdminPage() {
                 {/* Answers Section */}
                 {activeSection === "answers" && (
                   <div className="bg-white rounded-xl border border-[#6B7280]/10 overflow-hidden">
-                    {filteredAnswers.length === 0 ? (
+                    {dataLoading ? (
+                      <div className="flex justify-center py-12">
+                        <div className="animate-spin w-8 h-8 border-4 border-[#5B8FCB] border-t-transparent rounded-full" />
+                      </div>
+                    ) : filteredAnswers.length === 0 ? (
                       <EmptyState
                         type="answers"
                         onAction={() => setShowAddModal(true)}
@@ -607,43 +670,41 @@ export default function AdminPage() {
                       <table className="w-full">
                         <thead className="bg-[#F5F7FA]">
                           <tr>
-                            <th className="text-left py-3 px-4 text-sm font-semibold text-[#6B7280]">#</th>
                             <th className="text-left py-3 px-4 text-sm font-semibold text-[#6B7280]">Partido</th>
-                            <th className="text-left py-3 px-4 text-sm font-semibold text-[#6B7280]">Pregunta</th>
+                            <th className="text-left py-3 px-4 text-sm font-semibold text-[#6B7280]">ID Pregunta</th>
                             <th className="text-left py-3 px-4 text-sm font-semibold text-[#6B7280]">Respuesta</th>
                             <th className="text-right py-3 px-4 text-sm font-semibold text-[#6B7280]">Acciones</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#6B7280]/10">
-                          {filteredAnswers.map((answer) => (
-                            <tr key={answer.id} className="hover:bg-[#F5F7FA]/50 transition-colors group">
-                              <td className="py-3 px-4 text-sm text-[#6B7280]">{answer.id}</td>
-                              <td className="py-3 px-4 text-sm font-medium text-[#111111]">{answer.party}</td>
-                              <td className="py-3 px-4 text-sm text-[#6B7280]">Pregunta #{answer.question}</td>
-                              <td className="py-3 px-4">
-                                <span className={`text-xs font-medium px-2 py-1 rounded-lg ${
-                                  answer.answer === "Sí" ? "bg-[#5B8FCB]/10 text-[#5B8FCB]" :
-                                  answer.answer === "No" ? "bg-[#EF4444]/10 text-[#EF4444]" :
-                                  "bg-[#6B7280]/10 text-[#6B7280]"
-                                }`}>
-                                  {answer.answer}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4">
-                                <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button className="p-2 rounded-lg hover:bg-[#5B8FCB]/10 text-[#5B8FCB] transition-colors">
-                                    <Edit2 className="w-4 h-4" />
-                                  </button>
-                                  <button 
-                                    onClick={() => handleDeleteAnswer(answer.id)}
-                                    className="p-2 rounded-lg hover:bg-[#EF4444]/10 text-[#EF4444] transition-colors"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
+                          {filteredAnswers.map((answer) => {
+                            const partyName = parties.find((p) => p.docId === answer.partyId)?.name ?? answer.partyId
+                            return (
+                              <tr key={answer.docId} className="hover:bg-[#F5F7FA]/50 transition-colors group">
+                                <td className="py-3 px-4 text-sm font-medium text-[#111111]">{partyName}</td>
+                                <td className="py-3 px-4 text-sm text-[#6B7280]">{answer.questionExternalId}</td>
+                                <td className="py-3 px-4">
+                                  <span className={`text-xs font-medium px-2 py-1 rounded-lg ${
+                                    answer.answer === "yes" ? "bg-[#5B8FCB]/10 text-[#5B8FCB]" :
+                                    answer.answer === "no" ? "bg-[#EF4444]/10 text-[#EF4444]" :
+                                    "bg-[#6B7280]/10 text-[#6B7280]"
+                                  }`}>
+                                    {answer.answer === "yes" ? "Sí" : answer.answer === "no" ? "No" : "Neutral"}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4">
+                                  <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button 
+                                      onClick={() => handleDeleteAnswer(answer.docId)}
+                                      className="p-2 rounded-lg hover:bg-[#EF4444]/10 text-[#EF4444] transition-colors"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            )
+                          })}
                         </tbody>
                       </table>
                     )}
@@ -660,50 +721,62 @@ export default function AdminPage() {
                         </label>
                         <input
                           type="text"
-                          value={texts.title}
-                          onChange={(e) => setTexts({ ...texts, title: e.target.value })}
+                          value={texts.introTitle}
+                          onChange={(e) => setTexts({ ...texts, introTitle: e.target.value })}
                           className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
                         />
                       </div>
                       <div>
                         <label className="block text-sm font-semibold text-[#111111] mb-2">
-                          Descripción
+                          Descripción intro
                         </label>
                         <textarea
-                          value={texts.description}
-                          onChange={(e) => setTexts({ ...texts, description: e.target.value })}
+                          value={texts.introText}
+                          onChange={(e) => setTexts({ ...texts, introText: e.target.value })}
                           rows={3}
                           className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all resize-none text-[#111111]"
                         />
                       </div>
                       <div>
                         <label className="block text-sm font-semibold text-[#111111] mb-2">
-                          Texto del botón
+                          Disclaimer intro
                         </label>
                         <input
                           type="text"
-                          value={texts.buttonText}
-                          onChange={(e) => setTexts({ ...texts, buttonText: e.target.value })}
+                          value={texts.introDisclaimer}
+                          onChange={(e) => setTexts({ ...texts, introDisclaimer: e.target.value })}
                           className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
                         />
                       </div>
                       <div>
                         <label className="block text-sm font-semibold text-[#111111] mb-2">
-                          Mensaje de resultados
+                          Disclaimer resultados
                         </label>
                         <textarea
-                          value={texts.resultsMessage}
-                          onChange={(e) => setTexts({ ...texts, resultsMessage: e.target.value })}
+                          value={texts.resultDisclaimer}
+                          onChange={(e) => setTexts({ ...texts, resultDisclaimer: e.target.value })}
                           rows={3}
                           className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all resize-none text-[#111111]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-[#111111] mb-2">
+                          Email de contacto
+                        </label>
+                        <input
+                          type="email"
+                          value={texts.contactEmail}
+                          onChange={(e) => setTexts({ ...texts, contactEmail: e.target.value })}
+                          className="w-full px-4 py-3 rounded-xl border border-[#6B7280]/20 focus:border-[#5B8FCB] focus:ring-2 focus:ring-[#5B8FCB]/20 outline-none transition-all text-[#111111]"
                         />
                       </div>
                       <button 
                         onClick={handleSaveTexts}
-                        className="flex items-center gap-2 px-6 py-3 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] transition-colors"
+                        disabled={savingTexts}
+                        className="flex items-center gap-2 px-6 py-3 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] transition-colors disabled:opacity-60"
                       >
                         <Save className="w-5 h-5" />
-                        Guardar cambios
+                        {savingTexts ? "Guardando..." : "Guardar cambios"}
                       </button>
                     </div>
                   </div>

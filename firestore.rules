@@ -3,7 +3,13 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function isAdmin() {
+      // Opción A (actual): válida por email — cambiar si se añaden más admins
+      // return request.auth != null && request.auth.token.email == "admin@votamatch.pe";
+
+      // Opción B (recomendada): usar Custom Claim `admin: true` en Firebase Auth
+      // Activar con: firebase-admin setCustomUserClaims(uid, { admin: true })
       return request.auth != null
+        && request.auth.token.email_verified == true
         && request.auth.token.email == "admin@votamatch.pe";
     }
 
@@ -31,6 +37,11 @@ service cloud.firestore {
       allow create: if true;   // usuarios pueden guardar respuestas
       allow read: if isAdmin(); // solo admin ve analytics
       allow update, delete: if false;
+    }
+
+    // Bloquear cualquier colección no declarada explícitamente
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

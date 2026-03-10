@@ -1,474 +1,362 @@
 "use client"
 
-import { useState, useRef, useCallback } from "react"
-import {
-  Upload,
-  FileText,
-  X,
-  CheckCircle,
-  AlertCircle,
-  Download,
-  Loader2,
-  FileSpreadsheet,
-  Building2,
-  MessageSquare,
-  BarChart3,
-} from "lucide-react"
+import { useState, useRef } from "react"
+import { Upload, Download, FileSpreadsheet, AlertCircle, X } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
+import {
+  parseFile,
+  exportQuestions,
+  exportParties,
+  exportPartyAnswers,
+  exportResponses,
+  type ParseResult,
+  type ParseRowError,
+} from "@/lib/importExport"
+import { importQuestions, getQuestions } from "@/lib/firestore/questions"
+import { importParties, getParties } from "@/lib/firestore/parties"
+import { importPartyAnswers, getPartyAnswers } from "@/lib/firestore/partyAnswers"
+import { getResponses } from "@/lib/firestore/responses"
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface ImportExportSectionProps {
-  onToast: (message: string, type: "success" | "error" | "info") => void
+interface Props {
+  onToast: (msg: string, type: "success" | "error" | "info") => void
 }
 
-type ExportType = "preguntas" | "partidos" | "respuestas" | "resultados"
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const ALLOWED_EXTENSIONS = [".csv", ".xlsx", ".xls"]
-
-const MOCK_PREVIEW = {
-  headers: ["#", "Pregunta", "Categoría"],
-  rows: [
-    ["1", "¿Deberían aumentarse los impuestos a las grandes empresas?", "Economía"],
-    ["2", "¿Está de acuerdo con legalizar el uso recreativo de la marihuana?", "Social"],
-    ["3", "¿Debería el Estado invertir más en educación pública?", "Educación"],
-    ["4", "¿Apoya la construcción de más cárceles para reducir la delincuencia?", "Seguridad"],
-    ["5", "¿Cree que debería permitirse el matrimonio entre personas del mismo sexo?", "Social"],
-  ],
-}
-
-const CATEGORY_STYLES: Record<string, string> = {
-  Economía: "bg-[#5B8FCB]/10 text-[#5B8FCB]",
-  Social: "bg-[#EF4444]/10 text-[#EF4444]",
-  Educación: "bg-[#5B8FCB]/10 text-[#5B8FCB]",
-  Seguridad: "bg-[#6B7280]/10 text-[#6B7280]",
-}
-
-const EXPORT_ITEMS: {
-  type: ExportType
-  label: string
-  icon: React.ElementType
-  count: string
-}[] = [
-  { type: "preguntas", label: "Exportar preguntas", icon: FileText, count: "33 registros" },
-  { type: "partidos", label: "Exportar partidos", icon: Building2, count: "8 partidos" },
-  { type: "respuestas", label: "Exportar respuestas", icon: MessageSquare, count: "264 registros" },
-  { type: "resultados", label: "Exportar resultados", icon: BarChart3, count: "Todos los resultados" },
-]
-
-const EXPORT_LABELS: Record<ExportType, string> = {
-  preguntas: "Preguntas",
-  partidos: "Partidos",
-  respuestas: "Respuestas",
-  resultados: "Resultados",
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-// ─── Component ────────────────────────────────────────────────────────────────
-
-export function ImportExportSection({ onToast }: ImportExportSectionProps) {
-  const [file, setFile] = useState<File | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
-  const [fileError, setFileError] = useState<string | null>(null)
-  const [isImporting, setIsImporting] = useState(false)
-  const [importSuccess, setImportSuccess] = useState(false)
-  const [exportLoading, setExportLoading] = useState<ExportType | null>(null)
-
+export function ImportExportSection({ onToast }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
+  const [parseResult, setParseResult] = useState<ParseResult | null>(null)
+  const [parseErrors, setParseErrors] = useState<ParseRowError[]>([])
+  const [importing, setImporting] = useState(false)
+  const [exporting, setExporting] = useState<string | null>(null)
+  const [fileName, setFileName] = useState<string | null>(null)
 
-  // ── File handling ──
-
-  const validateAndSetFile = useCallback((f: File) => {
-    const ext = "." + (f.name.split(".").pop()?.toLowerCase() ?? "")
-    if (!ALLOWED_EXTENSIONS.includes(ext)) {
-      setFileError("Formato no permitido. Solo se aceptan archivos .csv y .xlsx")
-      setFile(null)
+  const handleFile = async (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase()
+    if (!ext || !["xlsx", "xls", "csv"].includes(ext)) {
+      onToast("Formato no soportado. Usa .xlsx, .xls o .csv", "error")
       return
     }
-    setFileError(null)
-    setFile(f)
-    setImportSuccess(false)
-  }, [])
-
-  const removeFile = () => {
-    setFile(null)
-    setFileError(null)
-    setImportSuccess(false)
-    if (fileInputRef.current) fileInputRef.current.value = ""
+    setFileName(file.name)
+    setParseResult(null)
+    setParseErrors([])
+    try {
+      const result = await parseFile(file)
+      setParseResult(result)
+      setParseErrors(result.errors)
+    } catch {
+      onToast("Error al leer el archivo. Verifica el formato.", "error")
+    }
   }
 
-  // ── Drag & Drop ──
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
-    setIsDragging(true)
-  }, [])
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(false)
-  }, [])
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault()
-      setIsDragging(false)
-      const dropped = e.dataTransfer.files[0]
-      if (dropped) validateAndSetFile(dropped)
-    },
-    [validateAndSetFile],
-  )
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = e.target.files?.[0]
-    if (selected) validateAndSetFile(selected)
+    setDragging(false)
+    const file = e.dataTransfer.files[0]
+    if (file) handleFile(file)
   }
 
-  // ── Import ──
+  const handleImport = async () => {
+    if (!parseResult) return
+    const { questions, parties, answers } = parseResult
+    if (questions.length === 0 && parties.length === 0) return
+    setImporting(true)
+    try {
+      // Step 1: upsert questions
+      if (questions.length > 0) await importQuestions(questions)
 
-  const handleImport = () => {
-    if (!file || isImporting) return
-    setIsImporting(true)
-    setTimeout(() => {
-      setIsImporting(false)
-      setImportSuccess(true)
-      onToast(`Datos importados correctamente desde "${file.name}"`, "success")
-    }, 2000)
+      // Step 2: upsert parties → get name→docId map
+      const nameToDocId =
+        parties.length > 0 ? await importParties(parties) : new Map<string, string>()
+
+      // Step 3: resolve partyId in answers and upsert
+      let importedAnswerCount = 0
+      if (answers.length > 0) {
+        const resolved = answers.flatMap((a) => {
+          const partyId = nameToDocId.get(a.partyName)
+          if (!partyId) return []
+          return [{ partyId, questionExternalId: a.questionExternalId, answer: a.answer }]
+        })
+        if (resolved.length > 0) await importPartyAnswers(resolved)
+        importedAnswerCount = resolved.length
+      }
+
+      onToast(
+        `Importado: ${questions.length} preguntas, ${parties.length} partidos, ${importedAnswerCount} respuestas`,
+        "success",
+      )
+      setParseResult(null)
+      setParseErrors([])
+      setFileName(null)
+    } catch (err) {
+      onToast(
+        err instanceof Error ? err.message : "Error al importar. Intenta nuevamente.",
+        "error",
+      )
+    } finally {
+      setImporting(false)
+    }
   }
 
-  // ── Export ──
-
-  const handleExport = (type: ExportType) => {
-    if (exportLoading) return
-    setExportLoading(type)
-    setTimeout(() => {
-      setExportLoading(null)
-      onToast(`${EXPORT_LABELS[type]} exportados correctamente`, "success")
-    }, 1500)
+  const handleExport = async (type: "questions" | "parties" | "answers" | "responses") => {
+    setExporting(type)
+    try {
+      if (type === "questions") {
+        exportQuestions(await getQuestions())
+      } else if (type === "parties") {
+        exportParties(await getParties())
+      } else if (type === "answers") {
+        const [answers, parties, questions] = await Promise.all([
+          getPartyAnswers(),
+          getParties(),
+          getQuestions(),
+        ])
+        exportPartyAnswers(answers, parties, questions)
+      } else if (type === "responses") {
+        exportResponses(await getResponses())
+      }
+      onToast("Archivo descargado correctamente", "success")
+    } catch {
+      onToast("Error al exportar datos", "error")
+    } finally {
+      setExporting(null)
+    }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
+  const exportItems = [
+    { id: "questions" as const, label: "Preguntas", description: "Todas las preguntas del quiz" },
+    { id: "parties" as const, label: "Partidos", description: "Lista de partidos registrados" },
+    { id: "answers" as const, label: "Respuestas de partidos", description: "Respuestas cruzadas por partido" },
+    { id: "responses" as const, label: "Participaciones", description: "Resultados de usuarios" },
+  ]
 
   return (
-    <div className="space-y-6">
-      {/* ══════════════════════════════════════════════════════════════════
-          IMPORT SECTION
-      ══════════════════════════════════════════════════════════════════ */}
-      <div className="bg-white rounded-2xl border border-[#6B7280]/10 shadow-sm overflow-hidden">
+    <div className="space-y-8">
+      {/* Import */}
+      <div className="bg-white rounded-2xl border border-[#6B7280]/10 p-6">
+        <h3 className="text-lg font-bold text-[#111111] mb-1">Importar Excel</h3>
+        <p className="text-sm text-[#6B7280] mb-6">
+          Sube el Excel del cliente. Debe contener las hojas{" "}
+          <span className="font-mono text-xs bg-[#F5F7FA] px-1 rounded">preguntas</span> y{" "}
+          <span className="font-mono text-xs bg-[#F5F7FA] px-1 rounded">partidos_respuestas</span>.
+          Las hojas <span className="font-mono text-xs bg-[#F5F7FA] px-1 rounded">trazabilidad</span> y{" "}
+          <span className="font-mono text-xs bg-[#F5F7FA] px-1 rounded">notas</span> se ignoran.
+        </p>
 
-        {/* Card header */}
-        <div className="px-6 py-5 border-b border-[#6B7280]/10 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[#5B8FCB]/10 flex items-center justify-center shrink-0">
-            <Upload className="w-5 h-5 text-[#5B8FCB]" />
-          </div>
-          <div>
-            <h3 className="font-bold text-[#111111]">Importar datos</h3>
-            <p className="text-xs text-[#6B7280] mt-0.5">
-              Sube un archivo CSV o Excel para importar datos al sistema.
-            </p>
-          </div>
+        {/* Drop zone */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault()
+            setDragging(true)
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+            dragging
+              ? "border-[#5B8FCB] bg-[#5B8FCB]/5"
+              : "border-[#6B7280]/20 hover:border-[#5B8FCB]/50 hover:bg-[#F5F7FA]"
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.[0]) handleFile(e.target.files[0])
+            }}
+          />
+          <Upload className="w-8 h-8 text-[#6B7280] mx-auto mb-3" />
+          {fileName ? (
+            <div className="flex items-center justify-center gap-2">
+              <FileSpreadsheet className="w-5 h-5 text-[#5B8FCB]" />
+              <span className="text-[#111111] font-medium">{fileName}</span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setFileName(null)
+                  setParseResult(null)
+                  setParseErrors([])
+                }}
+                className="p-0.5 rounded-full hover:bg-[#EF4444]/10 text-[#EF4444]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <p className="text-[#111111] font-medium">Arrastra tu archivo aquí</p>
+              <p className="text-sm text-[#6B7280] mt-1">o haz clic para seleccionar</p>
+            </>
+          )}
         </div>
 
-        <div className="p-6 space-y-5">
-
-          {/* ── Drop Zone / File Info ── */}
-          <AnimatePresence mode="wait">
-            {!file ? (
-              /* Drop Zone */
-              <motion.div
-                key="dropzone"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15 }}
-              >
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`relative cursor-pointer select-none border-2 border-dashed rounded-xl px-6 py-10 flex flex-col items-center gap-4 transition-all duration-200 ${
-                    isDragging
-                      ? "border-[#5B8FCB] bg-[#5B8FCB]/5 scale-[1.01]"
-                      : fileError
-                      ? "border-[#EF4444] bg-[#EF4444]/5"
-                      : "border-[#6B7280]/25 hover:border-[#5B8FCB]/50 hover:bg-[#5B8FCB]/3"
-                  }`}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv,.xlsx,.xls"
-                    className="hidden"
-                    onChange={handleInputChange}
-                  />
-
-                  {/* Icon */}
-                  <div
-                    className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${
-                      fileError
-                        ? "bg-[#EF4444]/10"
-                        : isDragging
-                        ? "bg-[#5B8FCB]/20"
-                        : "bg-[#5B8FCB]/10"
-                    }`}
-                  >
-                    {fileError ? (
-                      <AlertCircle className="w-7 h-7 text-[#EF4444]" />
-                    ) : (
-                      <Upload className="w-7 h-7 text-[#5B8FCB]" />
-                    )}
+        {/* Parse result */}
+        <AnimatePresence>
+          {parseResult && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="mt-4 space-y-3"
+            >
+              {/* Stats grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { label: "Preguntas", value: parseResult.questions.length, color: "text-[#5B8FCB]" },
+                  { label: "Partidos", value: parseResult.parties.length, color: "text-[#5B8FCB]" },
+                  { label: "Respuestas", value: parseResult.answers.length, color: "text-[#5B8FCB]" },
+                  {
+                    label: "Errores",
+                    value: parseErrors.length,
+                    color: parseErrors.length > 0 ? "text-[#EF4444]" : "text-green-500",
+                  },
+                ].map((s) => (
+                  <div key={s.label} className="p-3 rounded-xl bg-[#F5F7FA] text-center">
+                    <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+                    <p className="text-xs text-[#6B7280] mt-0.5">{s.label}</p>
                   </div>
+                ))}
+              </div>
 
-                  {/* Text */}
-                  {fileError ? (
-                    <div className="text-center space-y-1">
-                      <p className="font-semibold text-[#EF4444]">{fileError}</p>
-                      <p className="text-sm text-[#6B7280]">Intenta con un archivo .csv o .xlsx</p>
+              {/* Detected sheets */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-[#6B7280]">Hojas detectadas:</span>
+                {parseResult.detectedSheets.map((s) => (
+                  <span
+                    key={s}
+                    className="text-xs font-mono bg-[#5B8FCB]/10 text-[#5B8FCB] px-2 py-0.5 rounded"
+                  >
+                    {s}
+                  </span>
+                ))}
+              </div>
+
+              {/* Errors */}
+              {parseErrors.length > 0 && (
+                <div className="rounded-xl border border-[#EF4444]/20 bg-[#EF4444]/5 p-4 space-y-1 max-h-40 overflow-y-auto">
+                  {parseErrors.map((err, i) => (
+                    <div key={i} className="flex items-start gap-2 text-sm text-[#EF4444]">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>
+                        [{err.sheet}] Fila {err.row}, col &quot;{err.column}&quot;: {err.message}
+                      </span>
                     </div>
-                  ) : (
-                    <div className="text-center space-y-1">
-                      <p className="font-semibold text-[#111111]">
-                        {isDragging ? "Suelta tu archivo aquí" : "Arrastra tu archivo CSV o Excel aquí"}
-                      </p>
-                      <p className="text-sm text-[#6B7280]">o haz clic para seleccionar</p>
-                      <p className="text-xs text-[#6B7280]/60 pt-1">Formatos permitidos: .csv, .xlsx</p>
-                    </div>
-                  )}
+                  ))}
                 </div>
-              </motion.div>
-            ) : (
-              /* File Info */
-              <motion.div
-                key="fileinfo"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.2 }}
-              >
-                <div
-                  className={`flex items-center gap-4 p-4 rounded-xl border transition-colors ${
-                    importSuccess
-                      ? "bg-[#5B8FCB]/5 border-[#5B8FCB]/25"
-                      : "bg-[#F5F7FA] border-[#6B7280]/15"
-                  }`}
-                >
-                  <div
-                    className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-                      importSuccess
-                        ? "bg-[#5B8FCB]/15"
-                        : "bg-white border border-[#6B7280]/10 shadow-sm"
-                    }`}
-                  >
-                    {importSuccess ? (
-                      <CheckCircle className="w-5 h-5 text-[#5B8FCB]" />
-                    ) : (
-                      <FileSpreadsheet className="w-5 h-5 text-[#5B8FCB]" />
-                    )}
-                  </div>
+              )}
 
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-[#111111] text-sm truncate">{file.name}</p>
-                    <p className="text-xs text-[#6B7280] mt-0.5">
-                      {formatFileSize(file.size)}
-                      {importSuccess && " · Importado correctamente ✓"}
+              {/* Preview: questions */}
+              {parseResult.questions.length > 0 && (
+                <div className="rounded-xl border border-[#6B7280]/10 overflow-hidden">
+                  <div className="px-3 py-2 bg-[#F5F7FA] border-b border-[#6B7280]/10">
+                    <p className="text-xs font-semibold text-[#6B7280] uppercase tracking-wide">
+                      Vista previa — preguntas
                     </p>
                   </div>
-
-                  <button
-                    onClick={removeFile}
-                    title="Eliminar archivo"
-                    className="p-2 rounded-lg hover:bg-[#EF4444]/10 text-[#6B7280] hover:text-[#EF4444] transition-colors shrink-0"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* ── Preview Table ── */}
-          <AnimatePresence>
-            {file && !importSuccess && (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="space-y-2"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h4 className="text-sm font-semibold text-[#111111]">Vista previa</h4>
-                  <p className="text-xs text-[#6B7280]">
-                    Verifica que los datos sean correctos antes de importar.
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-[#6B7280]/15 overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm min-w-100">
+                  <div className="overflow-x-auto max-h-44">
+                    <table className="w-full text-sm">
                       <thead className="bg-[#F5F7FA]">
                         <tr>
-                          {MOCK_PREVIEW.headers.map((h) => (
-                            <th
-                              key={h}
-                              className="text-left py-3 px-4 text-xs font-semibold text-[#6B7280] uppercase tracking-wide whitespace-nowrap"
-                            >
-                              {h}
-                            </th>
-                          ))}
+                          <th className="text-left py-2 px-3 font-semibold text-[#6B7280]">ID</th>
+                          <th className="text-left py-2 px-3 font-semibold text-[#6B7280]">Pregunta</th>
+                          <th className="text-left py-2 px-3 font-semibold text-[#6B7280]">Categoría</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#6B7280]/10">
-                        {MOCK_PREVIEW.rows.map((row, i) => (
-                          <tr key={i} className="hover:bg-[#F5F7FA]/50 transition-colors">
-                            {/* # */}
-                            <td className="py-3 px-4 text-sm text-[#6B7280] font-medium w-10">
-                              {row[0]}
-                            </td>
-                            {/* Question */}
-                            <td className="py-3 px-4 text-sm text-[#111111] max-w-65">
-                              <span className="line-clamp-1">{row[1]}</span>
-                            </td>
-                            {/* Category badge */}
-                            <td className="py-3 px-4 whitespace-nowrap">
-                              <span
-                                className={`text-xs font-medium px-2 py-1 rounded-lg ${
-                                  CATEGORY_STYLES[row[2]] ?? "bg-[#6B7280]/10 text-[#6B7280]"
-                                }`}
-                              >
-                                {row[2]}
-                              </span>
-                            </td>
+                        {parseResult.questions.slice(0, 6).map((row, i) => (
+                          <tr key={i} className="hover:bg-[#F5F7FA]/50">
+                            <td className="py-2 px-3 text-[#6B7280] font-mono">{row.externalId}</td>
+                            <td className="py-2 px-3 text-[#111111] max-w-xs truncate">{row.text}</td>
+                            <td className="py-2 px-3 text-[#6B7280]">{row.category}</td>
                           </tr>
                         ))}
+                        {parseResult.questions.length > 6 && (
+                          <tr>
+                            <td colSpan={3} className="py-2 px-3 text-center text-sm text-[#6B7280]">
+                              +{parseResult.questions.length - 6} preguntas más…
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
-                  <div className="px-4 py-2.5 bg-[#F5F7FA]/60 border-t border-[#6B7280]/10">
-                    <p className="text-xs text-[#6B7280]">
-                      Mostrando 5 de 33 filas · Solo vista previa
-                    </p>
+                </div>
+              )}
+
+              {/* Preview: parties */}
+              {parseResult.parties.length > 0 && (
+                <div className="rounded-xl border border-[#6B7280]/10 p-3">
+                  <p className="text-xs font-semibold text-[#6B7280] uppercase tracking-wide mb-2">
+                    Vista previa — partidos
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {parseResult.parties.map((p, i) => (
+                      <span
+                        key={i}
+                        className="text-xs bg-[#5B8FCB]/10 text-[#5B8FCB] px-2 py-1 rounded-lg font-medium"
+                      >
+                        {p.name}
+                      </span>
+                    ))}
                   </div>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              )}
 
-          {/* ── Import Actions ── */}
-          <AnimatePresence>
-            {file && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="flex flex-col sm:flex-row gap-3 pt-1"
+              {/* Import button */}
+              <button
+                onClick={handleImport}
+                disabled={
+                  importing ||
+                  (parseResult.questions.length === 0 && parseResult.parties.length === 0)
+                }
+                className="w-full py-3 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                {importSuccess ? (
-                  <button
-                    onClick={removeFile}
-                    className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[#F5F7FA] text-[#6B7280] font-medium border border-[#6B7280]/20 hover:bg-[#6B7280]/10 transition-all text-sm"
-                  >
-                    Importar otro archivo
-                  </button>
+                {importing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Importando…
+                  </>
                 ) : (
                   <>
-                    <button
-                      onClick={handleImport}
-                      disabled={isImporting}
-                      className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-[#5B8FCB] text-white font-medium hover:bg-[#4A7DB8] disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-lg shadow-[#5B8FCB]/20 text-sm"
-                    >
-                      {isImporting ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Importando...
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-4 h-4" />
-                          Importar datos
-                        </>
-                      )}
-                    </button>
-                    <button
-                      onClick={removeFile}
-                      disabled={isImporting}
-                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white text-[#6B7280] font-medium border border-[#6B7280]/20 hover:bg-[#F5F7FA] disabled:opacity-60 transition-all text-sm"
-                    >
-                      <X className="w-4 h-4" />
-                      Cancelar
-                    </button>
+                    <Upload className="w-4 h-4" />
+                    Importar {parseResult.questions.length} preguntas +{" "}
+                    {parseResult.parties.length} partidos a Firestore
                   </>
                 )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* ── Empty state hint ── */}
-          {!file && !fileError && (
-            <div className="flex items-center gap-2 text-xs text-[#6B7280]/60">
-              <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
-              <span>Ningún archivo seleccionado</span>
-            </div>
+              </button>
+            </motion.div>
           )}
-        </div>
+        </AnimatePresence>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════
-          EXPORT SECTION
-      ══════════════════════════════════════════════════════════════════ */}
-      <div className="bg-white rounded-2xl border border-[#6B7280]/10 shadow-sm overflow-hidden">
-
-        {/* Card header */}
-        <div className="px-6 py-5 border-b border-[#6B7280]/10 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[#5B8FCB]/10 flex items-center justify-center shrink-0">
-            <Download className="w-5 h-5 text-[#5B8FCB]" />
-          </div>
-          <div>
-            <h3 className="font-bold text-[#111111]">Exportar datos</h3>
-            <p className="text-xs text-[#6B7280] mt-0.5">
-              Descarga los datos del sistema en formato CSV.
-            </p>
-          </div>
-        </div>
-
-        <div className="p-6 grid sm:grid-cols-2 gap-3">
-          {EXPORT_ITEMS.map(({ type, label, icon: Icon, count }) => (
+      {/* Export */}
+      <div className="bg-white rounded-2xl border border-[#6B7280]/10 p-6">
+        <h3 className="text-lg font-bold text-[#111111] mb-1">Exportar datos</h3>
+        <p className="text-sm text-[#6B7280] mb-6">
+          Descarga los datos de Firestore en formato CSV.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-3">
+          {exportItems.map((item) => (
             <button
-              key={type}
-              onClick={() => handleExport(type)}
-              disabled={exportLoading !== null}
-              className="flex items-center gap-4 p-4 rounded-xl border border-[#6B7280]/15 hover:border-[#5B8FCB]/40 hover:bg-[#5B8FCB]/4 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 group text-left"
+              key={item.id}
+              onClick={() => handleExport(item.id)}
+              disabled={exporting === item.id}
+              className="flex items-center gap-4 p-4 rounded-xl border border-[#6B7280]/10 hover:border-[#5B8FCB]/30 hover:bg-[#F5F7FA] text-left transition-all disabled:opacity-60 disabled:cursor-not-allowed group"
             >
-              {/* Icon */}
-              <div className="w-10 h-10 rounded-xl bg-[#5B8FCB]/10 flex items-center justify-center shrink-0 group-hover:bg-[#5B8FCB]/20 transition-colors">
-                {exportLoading === type ? (
-                  <Loader2 className="w-5 h-5 text-[#5B8FCB] animate-spin" />
-                ) : (
-                  <Icon className="w-5 h-5 text-[#5B8FCB]" />
-                )}
-              </div>
-
-              {/* Labels */}
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-[#111111] text-sm">{label}</p>
-                <p className="text-xs text-[#6B7280] mt-0.5">{count}</p>
-              </div>
-
-              {/* Download arrow */}
-              {exportLoading !== type && (
-                <Download className="w-4 h-4 text-[#6B7280]/40 group-hover:text-[#5B8FCB] transition-colors shrink-0" />
+              {exporting === item.id ? (
+                <div className="w-9 h-9 flex items-center justify-center">
+                  <div className="w-5 h-5 border-2 border-[#5B8FCB] border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : (
+                <div className="w-9 h-9 rounded-lg bg-[#5B8FCB]/10 text-[#5B8FCB] flex items-center justify-center group-hover:bg-[#5B8FCB] group-hover:text-white transition-colors">
+                  <Download className="w-4 h-4" />
+                </div>
               )}
+              <div>
+                <p className="font-semibold text-[#111111] text-sm">{item.label}</p>
+                <p className="text-xs text-[#6B7280]">{item.description}</p>
+              </div>
             </button>
           ))}
         </div>
