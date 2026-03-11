@@ -1,11 +1,11 @@
 import Link from "next/link"
 import Image from "next/image"
-import { ArrowLeft, FileText, Code2, Calculator, AlertCircle } from "lucide-react"
+import { ArrowLeft, Info, HelpCircle, Calculator, FileText, AlertTriangle, Shield, Mail } from "lucide-react"
 
 export const metadata = {
   title: "Metodología · Votamatch Perú 2026",
   description:
-    "Cómo se infieren las posiciones de los partidos y cómo se calcula la afinidad en Votamatch.",
+    "Cómo funciona VOTAMATCH: cuestionario, cálculo de coincidencia, fuentes y limitaciones.",
 }
 
 interface SectionProps {
@@ -23,8 +23,21 @@ function Section({ icon, title, children }: SectionProps) {
         </div>
         <h2 className="text-base font-bold text-slate-900">{title}</h2>
       </div>
-      <div className="text-sm text-slate-600 leading-relaxed space-y-2">{children}</div>
+      <div className="text-sm text-slate-600 leading-relaxed space-y-3">{children}</div>
     </div>
+  )
+}
+
+function BulletList({ items }: { items: string[] }) {
+  return (
+    <ul className="space-y-1.5 mt-1">
+      {items.map((item) => (
+        <li key={item} className="flex items-start gap-2">
+          <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#5B8FCB] shrink-0" />
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -40,9 +53,9 @@ function ScoreRow({
   color: string
 }) {
   return (
-    <div className="flex items-center gap-3 py-2.5 border-b border-slate-100 last:border-0">
+    <div className="flex items-start gap-3 py-2.5 border-b border-slate-100 last:border-0">
       <span
-        className={`text-xs font-bold px-2.5 py-1 rounded-full border ${color} shrink-0 min-w-15 text-center`}
+        className={`text-xs font-bold px-2.5 py-1 rounded-full border ${color} shrink-0 min-w-15 text-center mt-0.5`}
       >
         {score}
       </span>
@@ -90,132 +103,186 @@ export default function MetodologiaPage() {
         <div className="text-center mb-8">
           <h1 className="text-2xl md:text-3xl font-bold text-slate-900 mb-2">Metodología</h1>
           <p className="text-slate-500 text-sm md:text-base max-w-md mx-auto">
-            Cómo inferimos las posiciones de los partidos y cómo calculamos tu afinidad con ellos.
+            Cómo funciona VOTAMATCH y cómo se calculan los resultados.
           </p>
         </div>
 
         {/* Sections */}
         <div className="space-y-4">
-          {/* 1 — Fuentes */}
-          <Section icon={<FileText className="w-5 h-5" />} title="1. Fuentes de información">
+
+          {/* 1 — Qué es */}
+          <Section icon={<Info className="w-5 h-5" />} title="¿Qué es VOTAMATCH?">
             <p>
-              Las posiciones que se atribuyen a cada partido <strong>no son declaradas ni
-              verificadas directamente por los partidos</strong>. Fueron inferidas por el equipo de
-              Votamatch a partir de documentos públicos disponibles, que pueden incluir:
+              VOTAMATCH es una herramienta digital que permite a las y los ciudadanos comparar sus
+              posiciones sobre temas relevantes de política pública con las posiciones atribuidas a
+              los partidos políticos que participan en las elecciones.
             </p>
-            <ul className="list-disc list-inside space-y-1 text-slate-500 mt-2">
-              <li>Planes de gobierno presentados ante el JNE</li>
-              <li>Declaraciones públicas de candidatos</li>
-              <li>Posiciones históricas documentadas del partido</li>
-              <li>Votaciones y proyectos en el Congreso</li>
-            </ul>
-            <p className="mt-2 text-slate-500 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-              ⚠ La disponibilidad y calidad de los documentos varía por partido. Donde no hay
-              información suficiente, la posición se deja como <em>Neutral</em>.
+            <p>
+              El objetivo de VOTAMATCH es facilitar la orientación política del electorado,
+              promoviendo el acceso a información estructurada sobre las posiciones programáticas de
+              los partidos.
+            </p>
+            <p className="text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs">
+              Los resultados que ofrece la herramienta son{" "}
+              <strong className="font-semibold text-slate-600">orientativos</strong> y no
+              constituyen una recomendación de voto.
             </p>
           </Section>
 
-          {/* 2 — Codificación */}
-          <Section icon={<Code2 className="w-5 h-5" />} title="2. Codificación de respuestas">
+          {/* 2 — Cómo funciona */}
+          <Section icon={<HelpCircle className="w-5 h-5" />} title="¿Cómo funciona el cuestionario?">
             <p>
-              Cada posición —tanto la del usuario como la inferida del partido— se codifica con uno
-              de tres valores:
+              El usuario responde un cuestionario compuesto por{" "}
+              <strong className="font-semibold text-slate-800">33 afirmaciones</strong> relacionadas
+              con temas de política pública relevantes para el país.
             </p>
-            <div className="mt-3 space-y-0 rounded-xl border border-slate-100 overflow-hidden">
+            <p>Para cada afirmación, el usuario puede indicar su posición seleccionando:</p>
+            <div className="mt-1 space-y-0 rounded-xl border border-slate-100 overflow-hidden">
               <ScoreRow
-                label="Sí / A favor"
+                label="Sí"
                 score="Sí"
-                description="El partido apoya o promueve activamente la medida."
+                description="El usuario apoya o está de acuerdo con la afirmación."
                 color="bg-emerald-50 text-emerald-700 border-emerald-200"
               />
               <ScoreRow
-                label="No / En contra"
-                score="No"
-                description="El partido se opone o rechaza la medida."
-                color="bg-red-50 text-red-600 border-red-200"
-              />
-              <ScoreRow
-                label="Neutral / Sin posición"
+                label="Neutral"
                 score="Neutral"
-                description="No hay evidencia suficiente o la posición es ambigua."
+                description="El usuario no tiene una posición definida."
                 color="bg-slate-100 text-slate-500 border-slate-200"
               />
+              <ScoreRow
+                label="No"
+                score="No"
+                description="El usuario se opone o no está de acuerdo con la afirmación."
+                color="bg-red-50 text-red-600 border-red-200"
+              />
             </div>
+            <p>
+              Adicionalmente, el usuario puede marcar determinadas preguntas como{" "}
+              <strong className="font-semibold text-amber-700">más importantes</strong>, lo que
+              incrementa el peso de esas preguntas en el cálculo final de coincidencia.
+            </p>
           </Section>
 
           {/* 3 — Cálculo */}
-          <Section icon={<Calculator className="w-5 h-5" />} title="3. Cálculo de afinidad">
+          <Section icon={<Calculator className="w-5 h-5" />} title="Cálculo de coincidencia">
             <p>
-              Para cada partido se compara tu respuesta con la posición inferida en cada pregunta.
-              El puntaje de cada pregunta depende del tipo de coincidencia y si marcaste la pregunta
-              como <em>importante</em>:
+              El sistema compara las respuestas del usuario con las posiciones atribuidas a cada
+              partido político. El grado de coincidencia para cada afirmación se calcula así:
             </p>
-            <div className="mt-3 space-y-0 rounded-xl border border-slate-100 overflow-hidden">
+            <div className="mt-1 space-y-0 rounded-xl border border-slate-100 overflow-hidden">
               <ScoreRow
-                label="Coincidencia exacta"
-                score="1 pt"
-                description='Ambos responden igual (ej: Sí / Sí). Vale 2 pt si marcaste "Importante".'
+                label="Coincidencia exacta (misma respuesta)"
+                score="100 %"
+                description="Ambas partes responden igual, p. ej. Sí / Sí."
                 color="bg-emerald-50 text-emerald-700 border-emerald-200"
               />
               <ScoreRow
-                label="Coincidencia parcial"
-                score="0.5 pt"
-                description='Una de las partes responde Neutral. Vale 1 pt si marcaste "Importante".'
+                label="Neutral frente a Sí o No"
+                score="50 %"
+                description="Una de las partes no tiene posición definida."
                 color="bg-amber-50 text-amber-700 border-amber-200"
               />
               <ScoreRow
-                label="Sin coincidencia"
-                score="0 pt"
-                description="Las respuestas son opuestas (Sí vs No)."
+                label="Posiciones opuestas (Sí frente a No)"
+                score="0 %"
+                description="Las respuestas son contradictorias."
                 color="bg-red-50 text-red-600 border-red-200"
               />
             </div>
-            <p className="mt-3">
-              El porcentaje final se calcula dividiendo los puntos obtenidos entre el máximo
-              posible:
+            <p>
+              Cuando el usuario marca una pregunta como{" "}
+              <strong className="font-semibold text-amber-700">más importante</strong>, esa pregunta
+              recibe un peso mayor en el cálculo final. El resultado se expresa como un{" "}
+              <strong className="font-semibold text-slate-800">porcentaje de coincidencia</strong>{" "}
+              que indica el grado de afinidad entre las respuestas del usuario y las posiciones del
+              partido.
             </p>
-            <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-xs text-slate-600 text-center">
-              % afinidad = (puntos obtenidos / puntos máximos posibles) × 100
+            <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-xs text-slate-600 text-center">
+              % coincidencia = (puntos obtenidos / puntos máximos posibles) × 100
             </div>
           </Section>
 
-          {/* 4 — Advertencia */}
-          <Section icon={<AlertCircle className="w-5 h-5" />} title="4. Limitaciones y uso responsable">
+          {/* 4 — Fuentes */}
+          <Section icon={<FileText className="w-5 h-5" />} title="Fuentes de las posiciones de los partidos">
             <p>
-              Los resultados de Votamatch son <strong>estrictamente orientativos</strong> y tienen
-              como único objetivo facilitar la reflexión ciudadana sobre afinidades programáticas.
+              Las posiciones atribuidas a los partidos políticos se han inferido a partir de
+              información pública, incluyendo:
             </p>
-            <ul className="list-disc list-inside space-y-1 text-slate-500 mt-2">
-              <li>No representan posturas oficiales de ningún partido.</li>
-              <li>
-                La inferencia de posiciones puede contener errores o estar desactualizada.
-              </li>
-              <li>
-                El porcentaje de afinidad no indica que un partido sea &quot;mejor&quot; o
-                &quot;peor&quot; que otro.
-              </li>
-              <li>El voto es una decisión personal que va más allá de la afinidad programática.</li>
-            </ul>
+            <BulletList
+              items={[
+                "planes de gobierno",
+                "idearios partidarios",
+                "documentos programáticos",
+                "declaraciones públicas de dirigentes y candidatos",
+                "propuestas legislativas u otros documentos oficiales",
+              ]}
+            />
+            <p className="text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs">
+              Estas posiciones representan{" "}
+              <strong className="font-semibold">interpretaciones basadas en fuentes públicas</strong>{" "}
+              y no necesariamente constituyen declaraciones oficiales de los partidos.
+            </p>
           </Section>
+
+          {/* 5 — Limitaciones */}
+          <Section icon={<AlertTriangle className="w-5 h-5" />} title="Limitaciones">
+            <p>
+              VOTAMATCH simplifica posiciones políticas complejas en respuestas discretas (Sí,
+              Neutral o No). Por esta razón:
+            </p>
+            <BulletList
+              items={[
+                "el resultado no refleja necesariamente todas las dimensiones programáticas de un partido",
+                "la coincidencia porcentual no debe interpretarse como una evaluación completa de la proximidad política entre el usuario y un partido",
+              ]}
+            />
+            <p>
+              El objetivo de la herramienta es facilitar la comparación de posiciones, no sustituir
+              el análisis político individual.
+            </p>
+          </Section>
+
+          {/* 6 — Independencia */}
+          <Section icon={<Shield className="w-5 h-5" />} title="Independencia">
+            <p>
+              VOTAMATCH es una iniciativa{" "}
+              <strong className="font-semibold text-slate-800">independiente</strong> y no está
+              afiliada a ningún partido político ni organización electoral.
+            </p>
+            <p>
+              El proyecto busca contribuir a mejorar el acceso a información política estructurada y
+              promover un voto informado.
+            </p>
+          </Section>
+
+          {/* 7 — Contacto */}
+          <Section icon={<Mail className="w-5 h-5" />} title="Contacto">
+            <p>
+              Si deseas realizar comentarios, sugerencias o señalar posibles correcciones en las
+              posiciones atribuidas a los partidos, puedes escribir a:
+            </p>
+            <a
+              href="mailto:contacto@votamatch.pe"
+              className="inline-flex items-center gap-2 mt-1 text-[#5B8FCB] font-medium hover:text-[#4A7DB8] transition-colors"
+            >
+              <Mail className="w-4 h-4" />
+              contacto@votamatch.pe
+            </a>
+          </Section>
+
         </div>
 
         {/* Footer */}
-        <div className="mt-10 text-center">
+        <div className="mt-10 text-center space-y-4">
           <Link
             href="/"
             className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-[#5B8FCB] text-white text-sm font-medium hover:bg-[#4A7DB8] transition-colors shadow-sm"
           >
             Hacer el cuestionario
           </Link>
-          <p className="text-xs text-slate-400 mt-4">
-            ¿Tienes preguntas o detectaste un error?{" "}
-            <a
-              href="mailto:contacto@votamatch.pe"
-              className="underline underline-offset-2 hover:text-slate-600 transition-colors"
-            >
-              Contáctanos
-            </a>
-            .
+          <p className="text-xs text-slate-400">
+            © 2026 VOTAMATCH – Plataforma ciudadana independiente
           </p>
         </div>
       </div>
