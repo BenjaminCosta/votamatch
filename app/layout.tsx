@@ -4,6 +4,7 @@ import { Analytics } from '@vercel/analytics/next'
 import { ToastProvider } from '@/components/Toast'
 import { AuthProvider } from '@/providers/AuthProvider'
 import './globals.css'
+import Script from "next/script";   
 
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
@@ -25,6 +26,19 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className="font-sans antialiased">
+        <Script
+  src="https://www.googletagmanager.com/gtag/js?id=G-5PQ2B3CJP2"
+  strategy="afterInteractive"
+/>
+
+<Script id="google-analytics" strategy="afterInteractive">
+  {`
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-5PQ2B3CJP2');
+  `}
+</Script>
         <AuthProvider>
           <ToastProvider>
             {children}
