@@ -14,7 +14,7 @@ import { getQuestions } from "@/lib/firestore/questions"
 import { getPartiesForQuiz, type PartyForQuiz } from "@/lib/firestore/partyAnswers"
 import { saveResponse } from "@/lib/firestore/responses"
 import { calculateMatch } from "@/lib/quiz"
-import { saveSessionResults } from "@/lib/sessionResults"
+import { saveSessionResults, saveDetailedData } from "@/lib/sessionResults"
 import type { Question } from "@/lib/types"
 
 interface Answer {
@@ -87,6 +87,25 @@ export default function QuizPage() {
     console.log("[quiz] saving results to sessionStorage", results)
     saveSessionResults(results)
     console.log("[quiz] sessionStorage saved")
+
+    // 2b. Save detailed data (user answers + questions + party answers) for
+    //     the question-by-question comparison view in /result.
+    saveDetailedData({
+      userAnswers: userAnswersList,
+      questions: firestoreQuestions.map((q) => ({
+        externalId: q.externalId,
+        text: q.text,
+        category: q.category,
+        order: q.order,
+      })),
+      parties: firestoreParties.map((p) => ({
+        partyId: p.docId,
+        partyName: p.name,
+        partySlug: p.slug,
+        partyIconFileName: p.iconFileName ?? null,
+        answers: p.answers,
+      })),
+    })
 
     // 3. Save participation to Firestore (best-effort — never blocks navigation)
     if (firestoreParties.length > 0) {

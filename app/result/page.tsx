@@ -6,15 +6,24 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ResultList } from "@/components/ResultList"
 import { PartyIcon } from "@/components/PartyIcon"
-import { getPartyColor, colorToAlpha } from "@/lib/party-colors"
+import { ResultsDisclaimer } from "@/components/ResultsDisclaimer"
+import { DetailedComparison } from "@/components/DetailedComparison"
+import { getPartyColor } from "@/lib/party-colors"
 import { RotateCcw, Trophy, TrendingUp } from "lucide-react"
 import { motion } from "framer-motion"
-import { readSessionResults, clearSessionResults } from "@/lib/sessionResults"
+import {
+  readSessionResults,
+  clearSessionResults,
+  readDetailedData,
+  clearDetailedData,
+} from "@/lib/sessionResults"
 import type { MatchResult } from "@/lib/types"
+import type { DetailedQuizData } from "@/lib/sessionResults"
 
 export default function ResultPage() {
   const router = useRouter()
   const [results, setResults] = useState<MatchResult[] | null>(null)
+  const [detailedData, setDetailedData] = useState<DetailedQuizData | null>(null)
   const [ready, setReady] = useState(false)
   // Guard against React 18 Strict Mode running the effect twice:
   // first run reads + clears session; without this flag the second run
@@ -35,9 +44,11 @@ export default function ResultPage() {
       return
     }
     setResults(data)
+    setDetailedData(readDetailedData())
     setReady(true)
     // Clear after reading so a hard refresh doesn't re-show stale results
     clearSessionResults()
+    clearDetailedData()
   }, [router])
 
   // While reading sessionStorage / redirecting
@@ -132,7 +143,7 @@ export default function ResultPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
-            className="mb-8"
+            className="mb-6"
           >
             <ResultList
               results={rest.map((r) => ({
@@ -146,12 +157,19 @@ export default function ResultPage() {
           </motion.div>
         )}
 
+        {/* Detailed question-by-question comparison */}
+        {detailedData && (
+          <div className="mb-6">
+            <DetailedComparison data={detailedData} results={results} />
+          </div>
+        )}
+
         {/* Actions */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.4 }}
-          className="flex flex-col sm:flex-row gap-4 justify-center"
+          className="flex flex-col sm:flex-row gap-4 justify-center mb-8"
         >
           <Link
             href="/"
@@ -162,14 +180,29 @@ export default function ResultPage() {
           </Link>
         </motion.div>
 
-        <motion.p
+        {/* Disclaimer */}
+        <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.5 }}
-          className="text-center text-sm text-slate-400 mt-8"
         >
-          Estos resultados son orientativos y se basan en las posiciones públicas de los partidos.
-        </motion.p>
+          <ResultsDisclaimer />
+        </motion.div>
+
+        {/* Footer nav */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.6 }}
+          className="mt-6 flex justify-center gap-5 text-xs text-slate-400"
+        >
+          <Link href="/metodologia" className="hover:text-slate-600 transition-colors underline underline-offset-2">
+            Metodología
+          </Link>
+          <Link href="/" className="hover:text-slate-600 transition-colors">
+            Inicio
+          </Link>
+        </motion.div>
       </div>
     </main>
   )

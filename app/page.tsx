@@ -107,6 +107,20 @@ export default function HomePage() {
         >
           Tus respuestas son completamente anónimas.
         </motion.p>
+
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.9 }}
+          className="mt-4 flex justify-center gap-5 text-xs text-slate-400"
+        >
+          <Link
+            href="/metodologia"
+            className="hover:text-slate-600 transition-colors underline underline-offset-2"
+          >
+            Metodología
+          </Link>
+        </motion.div>
       </div>
     </main>
   )
